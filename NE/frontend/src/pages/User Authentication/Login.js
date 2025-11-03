@@ -10,7 +10,7 @@ import PersonIcon from '@mui/icons-material/Person';
 import LockIcon from '@mui/icons-material/Lock';
 import TermsDialog from './TermsDialog';
 import SupportDialog from './SupportDialog';
-import { setToken, setUsername } from '../../components/authUtils';
+// Assuming setToken/setUsername save to localStorage. We'll use localStorage directly for consistency.
 
 export default function Login() {
     const [username, setLoginUsername] = useState('');
@@ -24,71 +24,65 @@ export default function Login() {
     const theme = useTheme();
 
     const handleLogin = async (event) => {
-    event.preventDefault();
-    setError('');
-    
-    // Add validation for empty fields
-    if (!username.trim() || !password.trim()) {
-        setError('Please fill in all required fields');
-        return;
-    }
-    
-    setIsLoading(true);
-
-    try {
-        const response = await fetch('http://127.0.0.1:5001/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password }),
-        });
-
-        const data = await response.json();
+        event.preventDefault();
+        setError('');
         
-        if (!response.ok) {
-            const message = data.error || data.message || "Login failed. Please try again.";
-            
-            if (message.includes("awaiting admin approval")) {
-                setError("Your account is pending admin approval. You will be notified by email when activated.");
-            } else {
-                setError(message);
-            }
+        if (!username.trim() || !password.trim()) {
+            setError('Please fill in all required fields');
             return;
         }
+        
+        setIsLoading(true);
 
-        // Login successful and approved: Conditional Navigation
-        if (data.token) {
-            setToken(data.token);
-            console.log('JWT token stored successfully');
+        try {
+            const response = await fetch('http://127.0.0.1:5001/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password }),
+            });
 
-            if (data.username) {
-                    // 1. Log the value received from the API
-                    console.log('[Login] Username received from API:', data.username); 
-                    
-                    // 2. Store the username (assuming setUsername is imported and defined as above)
-                    setUsername(data.username); 
+            const data = await response.json();
+            
+            if (!response.ok) {
+                const message = data.error || data.message || "Login failed. Please try again.";
+                
+                if (message.includes("awaiting approval")) {
+                    setError(`Your account is pending approval by a ${data.role === 'admin' ? 'Developer' : 'Admin'}. You will be notified by email when activated.`);
+                } else if (message.includes("rejected")) {
+                    setError(`Your account registration was rejected. Reason: ${data.rejection_reason || 'Contact support.'}`);
                 } else {
-                    console.error('[Login] ERROR: API response is missing the "username" field.');
+                    setError(message);
                 }
-        }
+                return;
+            }
 
-        // Login successful and approved: Conditional Navigation
-        if (data.role === "admin") {
-            navigate(`/admin/${username}`);
-        }
-        else if (data.role === "reviewer") {
-            navigate(`/reviewer/dashboard`);
-        }
-        else {
-            navigate(`/dashboard/${username}`);
-        }
+            // --- CRITICAL FIX 1: Store Token and User Role/Username for RoleRouter ---
+            if (data.token && data.username && data.role) {
+                // The RoleRouter needs the role and username, stored as a JSON object under 'user'
+                localStorage.setItem('token', data.token);
+                localStorage.setItem('user', JSON.stringify({
+                    username: data.username,
+                    role: data.role
+                }));
+                console.log(`[Login Success] Stored token and user role: ${data.role}`);
+            } else {
+                 console.error('[Login] ERROR: API response is missing critical fields (token, username, or role).');
+                 setError("Login response missing key data. Please contact support.");
+                 return;
+            }
+            
+            // --- CRITICAL FIX 2: Universal Redirection ---
+            // Navigate to '/home'. The RoleRouter component will automatically read 
+            // the 'user' object from localStorage and redirect to the specific dashboard path.
+            navigate('/home'); 
 
-    } catch (err) {
-        setError('Network error. Please try again later.');
-        console.error('Network error:', err);
-    } finally {
-        setIsLoading(false);
-    }
-};
+        } catch (err) {
+            setError('Network error. Please ensure the backend is running at http://127.0.0.1:5001.');
+            console.error('Network error:', err);
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     const handleClickShowPassword = () => { setShowPassword(!showPassword); };
     const handleMouseDownPassword = (event) => { event.preventDefault(); };

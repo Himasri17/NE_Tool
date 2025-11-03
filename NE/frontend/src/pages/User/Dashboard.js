@@ -4,14 +4,18 @@ import {
     Container, Typography, TextField, Button, Box, List, ListItem, ListItemText,
     Paper, Dialog, DialogActions, DialogContent,
     DialogContentText, DialogTitle, Chip, CircularProgress, 
-    Grid, LinearProgress, Card, CardContent ,FormControl, InputLabel, Select, MenuItem, useTheme
+    Grid, LinearProgress, Card, CardContent ,FormControl, InputLabel, Select, MenuItem, useTheme, Alert
 } from "@mui/material";
-import FeedbackIcon from '@mui/icons-material/Feedback'; 
+import FeedbackIcon from '@mui/icons-material/Feedback';
+import RateReviewIcon from '@mui/icons-material/RateReview';
+import AssignmentLateIcon from '@mui/icons-material/AssignmentLate'; 
 import {  getToken, removeToken } from '../../components/authUtils'; 
 
 
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import FeedbackDialog from './FeedbackDialog'; 
+
+const API_BASE_URL = 'http://127.0.0.1:5001';
 
 export default function Dashboard() {
     const { username } = useParams();
@@ -27,9 +31,9 @@ export default function Dashboard() {
     const [selectedSentence, setSelectedSentence] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [autoTags, setAutoTags] = useState([]);
-    const [newSelection, setNewSelection] = useState({ isActive: false, text: '', mainTag: '', subtype: '' });
+    const [newSelection, setNewSelection] = useState({ isActive: false, text: '', tag: '' });
     const [editingSentence, setEditingSentence] = useState({ isActive: false, _id: null, textContent: '' });
-    const [editingTag, setEditingTag] = useState({ isActive: false, _id: null, text: '', mainTag: '', subtype: '' });
+    const [editingTag, setEditingTag] = useState({ isActive: false, _id: null, text: '', tag: '' });
     const [deleteConfirmation, setDeleteConfirmation] = useState({ isOpen: false, sentenceId: null });
     const [bulkUploadDialog, setBulkUploadDialog] = useState(false);
     const [file, setFile] = useState(null);
@@ -44,6 +48,12 @@ export default function Dashboard() {
     
     // FIXED: Use state for currentSentenceTags instead of derived value
     const [currentSentenceTags, setCurrentSentenceTags] = useState([]);
+
+    const [revisionList, setRevisionList] = useState([]);
+    const [isRevisionNotesDialogOpen, setIsRevisionNotesDialogOpen] = useState(false);
+
+
+    const [reviewStatusMessage, setReviewStatusMessage] = useState(null);
 
     // --- SEARCH & TAG MATCH STATES ---
     const [searchTerm, setSearchTerm] = useState('');
@@ -159,6 +169,78 @@ export default function Dashboard() {
             setCurrentSentenceTags([]);
         }
     }, [selectedSentence, tags]);
+
+
+    const handleNavigateToSentence = async (sentenceId) => {
+        try {
+            // Find the sentence in all sentences
+            const targetSentence = allSentences.find(s => s._id === sentenceId);
+            
+            if (targetSentence) {
+                // Select the sentence
+                setSelectedSentence(targetSentence);
+                
+                // If the sentence is in a different project, switch to that project
+                if (targetSentence.project_id && selectedProject?.project_name !== targetSentence.project_id) {
+                    const targetProject = projectTasks.find(p => 
+                        p.sentences.some(s => s._id === sentenceId)
+                    );
+                    if (targetProject) {
+                        handleSelectProject(targetProject);
+                    }
+                }
+                
+                // Scroll to the sentence in the list
+                setTimeout(() => {
+                    const sentenceElement = document.querySelector(`[data-sentence-id="${sentenceId}"]`);
+                    if (sentenceElement) {
+                        sentenceElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        
+                        // Highlight the sentence temporarily
+                        sentenceElement.style.backgroundColor = '#fff3e0';
+                        setTimeout(() => {
+                            sentenceElement.style.backgroundColor = '';
+                        }, 2000);
+                    }
+                }, 100);
+                
+                console.log(`Navigated to sentence: ${sentenceId}`);
+            } else {
+                console.warn(`Sentence ${sentenceId} not found in current view`);
+                alert('Sentence not found in current project. Please check the project selection.');
+            }
+        } catch (error) {
+            console.error('Error navigating to sentence:', error);
+            alert('Error navigating to sentence. Please try manually finding it in the list.');
+        }
+    };
+
+    useEffect(() => {
+        const fetchRevisionNotesCount = async () => {
+            if (!username) return;
+            
+            try {
+                const response = await fetchWithAuth(`${API_BASE_URL}/api/annotator/revision_notes/${username}`, {
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (response && response.ok) {
+                    const notes = await response.json();
+                    setRevisionList(notes);
+                } else if (response) {
+                    console.error('Failed to fetch revision notes:', response.status);
+                }
+            } catch (error) {
+                console.error('Error fetching revision notes count:', error);
+            }
+        };
+
+        fetchRevisionNotesCount();
+        const interval = setInterval(fetchRevisionNotesCount, 30000);
+        return () => clearInterval(interval);
+    }, [username]);
 
     const loadAllUserTasks = useCallback(async (setLoading = true) => {
         if (setLoading) setIsLoading(true);
@@ -597,6 +679,8 @@ export default function Dashboard() {
         setNewSelection({ isActive: false, text: '', mainTag: '', subtype: '' });
     };
 
+
+
     
 
      // Update the handleUpdateTag function
@@ -676,6 +760,62 @@ const handleUpdateTag = async () => {
         
         // Revert UI changes and fetch correct data state if update failed
         await loadAllUserTasks(false);
+    }
+};
+
+const handleRequestReview = async () => {
+    // 1. Validation Checks
+    if (!selectedSentence || !selectedSentence.is_annotated) {
+        setReviewStatusMessage({ severity: 'error', message: 'Please ensure the sentence is marked as Annotated and selected.' });
+        return;
+    }
+
+    const sentenceTags = currentSentenceTags.filter(t => t.source_sentence_id === selectedSentence._id);
+    
+    if (sentenceTags.length === 0) {
+         setReviewStatusMessage({ severity: 'warning', message: 'The sentence has no tags. Please annotate before requesting review.' });
+        return;
+    }
+
+    try {
+        setReviewStatusMessage({ severity: 'info', message: 'Submitting to Review Queue...' });
+
+        // 2. API Call: POST /api/sentence/submit_for_review
+        const response = await fetchWithAuth(`${API_BASE_URL}/api/sentence/submit_for_review`, {
+            method: 'POST',
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                sentence_id: selectedSentence._id,
+                project_id: selectedSentence.project_id,
+                annotator_username: username,
+            }),
+        });
+
+        if (!response) return;
+
+        if (response.ok) {
+            // 3. Optimistic UI Update on success
+            const updatedAllSentences = allSentences.map(s =>
+                // The backend sets 'PENDING_REVIEW' status, we update the local object
+                s._id === selectedSentence._id ? { ...s, review_status: 'PENDING_REVIEW' } : s
+            );
+            setAllSentences(updatedAllSentences);
+            setSelectedSentence({ ...selectedSentence, review_status: 'PENDING_REVIEW' });
+            
+            setReviewStatusMessage({ severity: 'success', message: 'Sentence submitted to reviewer dashboard successfully!' });
+            logUserAction(`Requested review for sentence ${selectedSentence._id}`);
+
+            // You would typically navigate to the next task here.
+            // const nextSentence = findNextSentence(selectedSentence._id, visibleSentences);
+            // setSelectedSentence(nextSentence);
+
+        } else {
+            const errorData = await response.json().catch(() => ({ error: 'Server did not return valid JSON.' }));
+            setReviewStatusMessage({ severity: 'error', message: `Submission Failed: ${errorData.message || errorData.error || 'Server Error'}` });
+        }
+    } catch (error) {
+        console.error('Error during review submission:', error);
+        setReviewStatusMessage({ severity: 'error', message: 'A network error occurred during submission.' });
     }
 };
 
@@ -771,6 +911,34 @@ const handleUpdateTag = async () => {
                 >
                     TAG STATS
                 </Button>
+
+                <Button 
+                variant="contained" 
+                onClick={() => setIsRevisionNotesDialogOpen(true)}
+                startIcon={<AssignmentLateIcon />}
+                sx={{ 
+                    ml: 2, 
+                    bgcolor: revisionList.length > 0 ? '#ff9800' : '#9e9e9e', 
+                    color: 'white',
+                    '&:hover': { 
+                        bgcolor: revisionList.length > 0 ? '#fb8c00' : '#757575' 
+                    } 
+                }}
+            >
+                Revision Notes 
+                {revisionList.length > 0 && 
+                    <Chip 
+                        label={revisionList.length} 
+                        size="small" 
+                        sx={{ 
+                            ml: 1, 
+                            bgcolor: 'white', 
+                            color: revisionList.length > 0 ? '#ff9800' : '#9e9e9e', 
+                            fontWeight: 'bold' 
+                        }} 
+                    />
+                }
+            </Button>
                 
                 {/* Logout Button (Theme usage fixed here too) */}
                 <Button 
@@ -1168,7 +1336,31 @@ const handleUpdateTag = async () => {
                                         >
                                             Mark as Not Annotated
                                         </Button>
+                                        <Button
+                                            variant ="contained"
+                                            color="primary"
+                                            onClick={handleRequestReview}
+                                            disabled={!selectedSentence || selectedSentence.review_status === 'PENDING_REVIEW' || !selectedSentence.is_annotated}
+                                            startIcon={<RateReviewIcon/>}
+                                            sx={{ bgcolor:theme.palette.info.main}}
+                                        >
+                                            REQUEST REVIEW
+                                        </Button>
+                                        
                                     </Box>
+                                    {/* Status Display */}
+                                        {selectedSentence && selectedSentence.review_status === 'PENDING_REVIEW' && (
+                                            <Typography variant="caption" color="warning.dark" sx={{ mt: 1 }}>
+                                                * This sentence is currently awaiting reviewer feedback.
+                                            </Typography>
+                                        )}
+
+                                        {/* Alert for Submission Success/Error */}
+                                        {reviewStatusMessage && (
+                                            <Alert severity={reviewStatusMessage.severity} onClose={() => setReviewStatusMessage(null)} sx={{ mt: 2 }}>
+                                                {reviewStatusMessage.message}
+                                            </Alert>
+                                        )}
                                 </Box>
                             )}
                         </Box>

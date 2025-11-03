@@ -39,22 +39,31 @@ export default function Register() {
     const theme = useTheme();
 
     // --- Dropdown Options (UNCHANGED) ---
-    const roleOptions = [{ value: 'user', label: 'Annotator/User' }, { value: 'admin', label: 'Admin' }, { value: 'reviewer', label: 'Reviewer' }];
+    const roleOptions = [{ value: 'user', label: 'Annotator/User' }, { value: 'admin', label: 'Admin' }, { value: 'reviewer', label: 'Reviewer' }, { value: 'developer', label: 'Developer' }];
     const languageOptions = ['English', 'Hindi', 'Marathi', 'Assamese', 'Boro', 'Nepali', 'Manipuri', 'Bangla', 'Maithili', 'Konkani'];
     const organizationOptions = [
         'NBU', 'DU', 'IITM', 'IITB', 'IIT BHU', 'GU', 'IIITH',
-        'NIT Manipur', 'NIT Meghalaya', 'JNU', 'CDAC-Pune', 'Goa University'
+        'NIT Manipur', 'NIT Meghalaya', 'JNU', 'CDAC-Pune', 'CDAC kolkata', 'Goa University'
     ];
 
     // --- Register Handler (UPDATED WITH LOADING) ---
     const handleRegister = async (event) => {
         event.preventDefault();
         setError(''); // Clear previous errors
-
-        if (!fullName || !email || !password || !role || !organization) {
+        const isDeveloper = role.toLowerCase() === 'developer';
+        if (!fullName || !email || !password || !role) { // <--- FIXED LINE
             setError("Please fill in all required fields.");
             return;
         }
+    
+    // 2. Conditional Field Check (The logic you already implemented)
+        if (!isDeveloper && !organization) {
+        // This checks non-developers who left Organization empty
+            setError("Organization is mandatory for non-developer roles.");
+            return;
+        }
+
+    //}
 
         setIsLoading(true); // START LOADING
 
@@ -68,9 +77,9 @@ export default function Register() {
                     password,
                     // CRITICAL: Ensure the role variable (which holds 'reviewer') is sent
                     role, 
-                    organization,
+                    organization : isDeveloper ? "SYSTEM_DEVELOPER" : organization,
                     // Ensure languages is sent as an array
-                    languages: Array.isArray(languages) ? languages : [languages], 
+                    languages: isDeveloper ? ["N/A"] : (Array.isArray(languages) ? languages : [languages]), 
                 }),
             });
 
@@ -170,15 +179,16 @@ export default function Register() {
                             disabled={isLoading}
                         />
                         
-                        <FormControl fullWidth margin="normal" required sx={{ mb: 2 }}>
+                        <FormControl fullWidth margin="normal" required={role.toLowerCase() !== 'developer'} sx={{ mb: 2 }}>
                             <InputLabel id="languages-label">Select Languages</InputLabel>
                             <Select 
                                 labelId="languages-label" 
                                 value={languages} 
                                 onChange={(e) => setLanguages(e.target.value)} 
                                 label="Select Languages"
+                                disabled={isLoading || role.toLowerCase() === 'developer'}
                                 startAdornment={<InputAdornment position="start"><LanguageIcon color="action" /></InputAdornment>}
-                                disabled={isLoading}
+                                
                             >
                                 {languageOptions.map((lang) => (<MenuItem key={lang} value={lang}>{lang}</MenuItem>))}
                             </Select>
@@ -198,15 +208,15 @@ export default function Register() {
                             </Select>
                         </FormControl>
                         
-                        <FormControl fullWidth margin="normal" required sx={{ mb: 1 }}>
+                        <FormControl fullWidth margin="normal" required={role.toLowerCase() !== 'developer'} sx={{ mb: 1 }}>
                             <InputLabel id="organization-label">Organization</InputLabel>
                             <Select 
                                 labelId="organization-label" 
                                 value={organization} 
                                 onChange={(e) => setOrganization(e.target.value)} 
                                 label="Organization" 
+                                disabled={isLoading || role.toLowerCase() === 'developer'}
                                 startAdornment={<InputAdornment position="start"><BusinessIcon color="action" /></InputAdornment>}
-                                disabled={isLoading}
                             >
                                 {organizationOptions.map((org) => (<MenuItem key={org} value={org}>{org}</MenuItem>))}
                             </Select>

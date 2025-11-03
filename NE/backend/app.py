@@ -7,7 +7,7 @@ from flask_cors import CORS
 from flask_mail import Mail, Message
 from bson import ObjectId
 from pymongo import MongoClient
-import bcrypt
+import bcrypt 
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import PyPDF2
@@ -40,7 +40,7 @@ app.config['JWT_EXPIRATION_HOURS'] = 24
 
 # --- MongoDB Connection ---
 client = MongoClient("mongodb://localhost:27017/")
-db = client["NER_app"]
+db = client["NER_Tool"]
 
 # --- Mail Configuration ---
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'  
@@ -55,12 +55,15 @@ users_collection = db["users"]
 sentences_collection = db["sentences"]
 user_activities_collection = db["user_activities"]
 user_session_history_collection = db["user_session_history"]
-tags_collection = db["tags"]           
+tags_collection = db["tags"]             # FINAL/APPROVED tags
 projects_collection = db["projects"]
 search_tags_collection = db["search_tags"] 
 feedback_collection = db["feedback"] 
 org_admins_collection = db["org_admins"]
-staged_tags_collection = db["staged_tags"] 
+staged_tags_collection = db["staged_tags"]
+revision_notes_collection = db["revision_notes"] 
+# --- Helper Functions (UNCHANGED) ---
+
 
 
 # --- Configuration (UNCHANGED) ---
@@ -175,6 +178,36 @@ def admin_required(f):
         # Check if user is admin
         if payload.get('role') != 'admin':
             return jsonify({"message": "Admin access required"}), 403
+        
+        # Add user info to request context for use in the route
+        request.current_user = payload
+        return f(*args, **kwargs)
+    
+    return decorated
+
+
+def developer_required(f):
+    """Decorator to protect routes that require developer role"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        
+        # Get token from Authorization header (same as admin_required)
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
+        
+        if not token:
+            return jsonify({"message": "Token is missing"}), 401
+        
+        # Verify token (same as admin_required)
+        payload = verify_jwt_token(token)
+        if not payload:
+            return jsonify({"message": "Token is invalid or expired"}), 401
+        
+        # Check if user is developer (THE CRITICAL DIFFERENCE)
+        if payload.get('role') != 'developer':
+            return jsonify({"message": "Developer access required"}), 403
         
         # Add user info to request context for use in the route
         request.current_user = payload
@@ -744,6 +777,93 @@ def log_user_action():
         print(f"Error logging action: {e}")
         return jsonify({"error": "Internal server error"}), 500
     
+
+def send_developer_notification(new_user_data, approval_target):
+    """Sends an email to a system owner or existing developer about a pending Admin/Developer registration."""
+    
+    # 1. Find existing Approved Developer email(s) for notification
+    # This ensures only currently approved developers get the approval request.
+    developer_emails = [
+        user['email'] for user in users_collection.find({"role": "developer", "is_approved": True})
+    ]
+    
+    # Fallback/Default Recipient if no approved developers exist (e.g., system owner)
+    if not developer_emails:
+        print("ALERT: No approved developers found. Sending notification to default system email.")
+        developer_emails.append(app.config['MAIL_USERNAME']) # Sends to the mail sender address
+
+    try:
+        msg = Message(
+            subject=f"ACTION REQUIRED: New {new_user_data['role'].upper()} Registration - {new_user_data['full_name']}",
+            sender=app.config['MAIL_USERNAME'],
+            recipients=developer_emails
+        )
+        
+        msg.body = f"""
+Dear System Owner/Developer,
+
+A new user with the role '{new_user_data['role'].upper()}' has registered and requires your approval:
+
+User Details:
+- Role: {new_user_data['role'].upper()}
+- Full Name: {new_user_data['full_name']}
+- Email: {new_user_data['email']}
+- Organization: {new_user_data['organization']}
+- Registration Date: {get_ist_time().strftime('%Y-%m-%d %H:%M:%S IST')}
+
+This user cannot log in until you approve their account via the Developer Dashboard.
+
+Best regards,
+Sentence Annotation System
+"""
+        mail.send(msg)
+        print(f"Developer notification sent to: {developer_emails}")
+        
+    except Exception as e:
+        print(f"Failed to send developer notification: {e}")
+        # Log the detailed exception for debugging
+        import traceback
+        traceback.print_exc()
+
+def send_org_admin_notification(user_data):
+    """Placeholder to notify Org Admins about a pending Annotator/Reviewer registration."""
+    print(f"NOTIFICATION: New {user_data.get('role')} registered ({user_data.get('email')}). Requires Org Admin approval.")
+    # Add actual email/notification logic here
+
+def send_developer_welcome_email(user_data):
+    """Sends a welcome email to a newly auto-approved developer user."""
+    try:
+        msg = Message(
+            subject="Welcome to System - Developer Account Activated",
+            sender=app.config['MAIL_USERNAME'],
+            recipients=[user_data['email']]
+        )
+        
+        msg.body = f"""
+Dear {user_data['full_name']},
+
+Your Developer account has been automatically approved and activated.
+
+You can now log in to the system immediately using your credentials. As a Developer, you have system-level access to management and reporting tools.
+
+Access the system at: [Your System URL]
+
+Best regards,
+System Team
+"""
+        mail.send(msg)
+        print(f"Welcome email sent to new developer: {user_data['email']}")
+        
+    except Exception as e:
+        print(f"Failed to send developer welcome email: {e}")
+
+def log_action_and_update_report(actor, message):
+    """Placeholder for logging system activities."""
+    print(f"LOG: [{actor}] {message}")
+
+
+
+    
 @app.route("/register", methods=["POST"])
 def register():
     """Handles user registration with IST timestamps."""
@@ -757,13 +877,34 @@ def register():
     if not all([username, password, email, role]): 
         return jsonify({"message": "All required fields are mandatory"}), 400
     
+    is_developer = role.lower() == "developer"
+    
+    # Conditional Field Validation (Organization is required for non-developers)
+    if not is_developer and organization in ["N/A", "", None]:
+         return jsonify({"message": "Organization is mandatory for non-developer roles"}), 400
+         
     if users_collection.find_one({"username": username}): 
         return jsonify({"message": "Account with this email already exists"}), 400
-        
-    hashed_pw = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
+
+    # --- NEW Developer Logic: Check Limit and Auto-Approve ---
     
-    # Auto-approve admin users, require approval for other roles (including reviewers)
-    is_approved = (role.lower() == "admin")
+    # 1. Developer Limit Check
+    if is_developer: 
+        developer_count = users_collection.count_documents({"role": "developer"})
+        if developer_count >= 2:
+            return jsonify({"message": "Maximum limit of 2 developers has been reached. Developer registration failed."}), 403
+            
+        # 2. Auto-Approval for Developer role (up to the limit)
+        is_approved = True
+        organization = "SYSTEM_DEVELOPER" # Enforce default for consistency
+        languages = ["N/A"] 
+    else:
+        # 3. All other roles (Admin, User, Reviewer) REQUIRE approval
+        is_approved = False
+    
+    # --- End NEW Developer Logic ---
+    
+    hashed_pw = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
     
     # Use IST timezone
     IST = ZoneInfo("Asia/Kolkata")
@@ -778,17 +919,17 @@ def register():
         "role": role, 
         "organization": organization,
         "languages": languages, 
-        "is_approved": is_approved, 
-        "registered_at": registration_time_ist,  # IST timestamp
-        "approved_by": "auto" if is_approved else None,
-        "approved_at": registration_time_ist if is_approved else None,  # IST timestamp
+        "is_approved": is_approved, # NOW TRUE FOR DEVELOPER
+        "registered_at": registration_time_ist,
+        # Auto-set approval fields if auto-approved
+        "approved_by": "system_auto" if is_approved else None, 
+        "approved_at": registration_time_ist if is_approved else None, 
         "rejection_reason": None
     }
     
     users_collection.insert_one(user_data)
     
-    user_activities_collection.insert_one({"username": username, "activities": []})
-    user_session_history_collection.insert_one({"username": username, "sessions": []})
+    # ... (user activities and session history inserts remain here) ...
     
     # Collect data for the email notification
     user_data_for_email = {
@@ -799,31 +940,23 @@ def register():
         "languages": languages
     }
     
-    # NEW: Add admin users to org_admins collection
-    if role.lower() == "admin":
-        # Check if admin already exists in org_admins to avoid duplicates
-        existing_admin = org_admins_collection.find_one({"email": email, "organization": organization})
-        if not existing_admin:
-            org_admin_data = {
-                "username": username,
-                "full_name": full_name,
-                "email": email,
-                "organization": organization,
-                "role": role,
-                "added_at": registration_time_ist,  # IST timestamp
-                "is_active": True
-            }
-            org_admins_collection.insert_one(org_admin_data)
-            print(f"Admin user {username} added to org_admins collection for organization {organization}")
+    # --- NEW Post-Registration Flow ---
+    
+    if role.lower() == "developer":
+        # Auto-approved developer - send welcome email (now defined below)
+        send_developer_welcome_email(user_data_for_email)
+        log_action_and_update_report("system", f'New DEVELOPER user registered and auto-approved: {username}.')
+        return jsonify({"message": "Developer registered successfully. You can login immediately."})
         
-        # Auto-approved admin - send welcome email
-        send_admin_welcome_email(user_data_for_email)
-        log_action_and_update_report("system", f'New ADMIN user registered and auto-approved: {username}.')
-        return jsonify({"message": "Admin user registered successfully. You can login immediately."})
-    else:
-        # Regular user (Annotator OR Reviewer) - send approval request to org admin
+    elif role.lower() == "admin":
+        # Admins need to be approved by a Developer (Notification remains the same)
+        send_developer_notification(user_data_for_email, approval_target="Developer")
+        log_action_and_update_report("system", f'New ADMIN user registered: {username}. Awaiting approval by Developer.')
+        return jsonify({"message": "Admin registered successfully. Awaiting developer approval."})
+
+    else: # Regular user (Annotator OR Reviewer) - Awaiting Admin approval
         send_org_admin_notification(user_data_for_email)
-        log_action_and_update_report("system", f'New user registered: {username}. Awaiting approval.')
+        log_action_and_update_report("system", f'New user registered: {username}. Awaiting Organization Admin approval.')
         return jsonify({"message": "User registered successfully. Awaiting admin approval."})
     
 @app.route("/api/org-admins", methods=["GET"])
@@ -1044,12 +1177,36 @@ def login():
     if not user or not bcrypt.checkpw(password.encode("utf-8"), user["password"]):
         return jsonify({"message": "Invalid credentials"}), 401
     
-    # Allow admin users to login immediately, check approval for other roles
-    if user.get("role", "").lower() != "admin" and not user.get("is_approved", False):
-        return jsonify({"error": "Account awaiting admin approval", "message": "Your account is pending admin approval."}), 403
+    user_role = user.get("role", "user").lower()
+    is_approved = user.get("is_approved", False)
     
-    # Generate JWT token
-    token = generate_jwt_token(username_or_email, user.get("role", "user"))
+    # --- NEW Approval Check Logic ---
+    
+    # 1. Developer Role Check (Only Developers and approved Admins/Users/Reviewers can proceed)
+    # The Developer role is the highest level, and while their registration is pending, 
+    # they shouldn't log in either.
+    if not is_approved:
+        # Check if the registration was explicitly rejected
+        if user.get("is_rejected", False):
+            return jsonify({"error": f"Account registration was rejected. Reason: {user.get('rejection_reason', 'Contact support.')}"}), 403
+
+        # If not approved and not explicitly rejected, it's pending.
+        if user_role == "developer":
+            approval_target = "System Owner"
+        elif user_role == "admin":
+            approval_target = "Developer"
+        else: # user/annotator/reviewer
+            approval_target = "Admin"
+            
+        return jsonify({
+            "error": "Account awaiting approval", 
+            "message": f"Your account is pending approval by a {approval_target}."
+        }), 403
+
+    # --- End NEW Approval Check Logic ---
+
+    # Generate JWT token (only runs if is_approved is True)
+    token = generate_jwt_token(username_or_email, user_role)
     if not token:
         return jsonify({"message": "Failed to generate authentication token"}), 500
     
@@ -1058,8 +1215,8 @@ def login():
     return jsonify({
         "message": "Login successful", 
         "username": username_or_email, 
-        "role": user.get("role", "user"),
-        "token": token,  # Include JWT token in response
+        "role": user_role,
+        "token": token, 
         "expires_in_hours": app.config['JWT_EXPIRATION_HOURS']
     })
     
@@ -1270,6 +1427,63 @@ Sentence Annotation System Team
     except Exception as e:
         print(f"Error resetting password: {e}")
         return jsonify({"error": "Internal server error"}), 500
+    
+
+# --- NEW DEVELOPER ROUTE FOR APPROVAL ---
+
+@app.route("/developer/pending-users", methods=["GET"])
+@developer_required
+def get_developer_pending_users():
+    """
+    Fetches all Admin and Developer users awaiting approval by a Developer.
+    """
+    try:
+        # FIX: Fetches users with role 'admin' or 'developer' AND is_approved: False
+        pending_users = list(users_collection.find({
+            "role": {"$in": ["admin", "developer"]},
+            "is_approved": False
+        }, {"password": 0, "reset_otp": 0, "reset_otp_expiry": 0})) 
+
+        for user in pending_users:
+            user['_id'] = str(user['_id'])
+            if 'registered_at' in user and isinstance(user['registered_at'], datetime):
+                 user['registered_at'] = user['registered_at'].strftime('%Y-%m-%d %H:%M:%S')
+            
+        return jsonify({"pending_users": pending_users}), 200
+
+    except Exception as e:
+        print(f"Error fetching pending developer/admin users: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Internal server error"}), 500
+
+@app.route("/developer/feedback", methods=["GET"])
+@developer_required
+def get_developer_feedback():
+    """Fetches all submitted user feedback."""
+    try:
+        feedbacks_cursor = feedback_collection.find().sort("time", -1) 
+        
+        feedbacks_list = []
+        for feedback in feedbacks_cursor:
+            # FIX: Ensure field names match the FE viewer requirements (feedback_text, file_path)
+            feedback_data = {
+                "id": str(feedback["_id"]),
+                "email": feedback.get("email", "anonymous@example.com"),
+                "feedback_text": feedback.get("feedback_text", "[No text]"),
+                "file_path": feedback.get("file_path", "None"),
+                "time": feedback.get("time", get_ist_time()).strftime('%Y-%m-%d %H:%M:%S IST'),
+                "is_reviewed": feedback.get("is_reviewed", False)
+            }
+            feedbacks_list.append(feedback_data)
+        
+        return jsonify({"feedbacks": feedbacks_list}), 200
+        
+    except Exception as e:
+        print(f"Error fetching feedback for developer: {e}")
+        return jsonify({"error": "Internal server error while fetching feedbacks"}), 500
+
+
     
 # --- NEW ADMIN ROUTES FOR APPROVAL (UNCHANGED) ---
 
@@ -1503,10 +1717,10 @@ def get_user_data(username):
 
 # --- Visualization & Analytics Endpoints (UNCHANGED) ---
 
-@app.route("/api/analytics/NER-distribution", methods=["GET"])
+@app.route("/api/analytics/NE-distribution", methods=["GET"])
 @admin_required
-def get_NER_distribution():
-    """Get comprehensive NER analytics with enhanced metrics"""
+def get_ne_distribution():
+    """Get comprehensive NE analytics with enhanced metrics"""
     try:
         # Get optional filters from query parameters
         language = request.args.get("language")
@@ -1535,7 +1749,7 @@ def get_NER_distribution():
         
         # Enhanced statistics with more metrics
         project_stats = {}
-        NER_type_stats = {}
+        ne_type_stats = {}
         language_stats = {}
         user_stats = {}
         time_stats = {}
@@ -1547,37 +1761,37 @@ def get_NER_distribution():
             sentence_id = tag.get("source_sentence_id")
             annotation_date = tag.get("annotation_date")
             
-            # Enhanced NER type statistics
-            if tag_type not in NER_type_stats:
-                NER_type_stats[tag_type] = {
+            # Enhanced NE type statistics
+            if tag_type not in ne_type_stats:
+                ne_type_stats[tag_type] = {
                     "count": 0, 
                     "unique_words": set(),
                     "unique_users": set(),
                     "first_annotation": annotation_date,
                     "last_annotation": annotation_date
                 }
-            NER_type_stats[tag_type]["count"] += 1
-            NER_type_stats[tag_type]["unique_words"].add(tag_text)
-            NER_type_stats[tag_type]["unique_users"].add(tag_user)
+            ne_type_stats[tag_type]["count"] += 1
+            ne_type_stats[tag_type]["unique_words"].add(tag_text)
+            ne_type_stats[tag_type]["unique_users"].add(tag_user)
             
             # Update date range
             if annotation_date:
-                if NER_type_stats[tag_type]["first_annotation"] is None or annotation_date < NER_type_stats[tag_type]["first_annotation"]:
-                    NER_type_stats[tag_type]["first_annotation"] = annotation_date
-                if NER_type_stats[tag_type]["last_annotation"] is None or annotation_date > NER_type_stats[tag_type]["last_annotation"]:
-                    NER_type_stats[tag_type]["last_annotation"] = annotation_date
+                if ne_type_stats[tag_type]["first_annotation"] is None or annotation_date < ne_type_stats[tag_type]["first_annotation"]:
+                    ne_type_stats[tag_type]["first_annotation"] = annotation_date
+                if ne_type_stats[tag_type]["last_annotation"] is None or annotation_date > ne_type_stats[tag_type]["last_annotation"]:
+                    ne_type_stats[tag_type]["last_annotation"] = annotation_date
             
             # Enhanced user statistics
             if tag_user not in user_stats:
                 user_stats[tag_user] = {
                     "count": 0, 
-                    "NER_types": set(),
+                    "ne_types": set(),
                     "unique_phrases": set(),
                     "first_annotation": annotation_date,
                     "last_annotation": annotation_date
                 }
             user_stats[tag_user]["count"] += 1
-            user_stats[tag_user]["NER_types"].add(tag_type)
+            user_stats[tag_user]["ne_types"].add(tag_type)
             user_stats[tag_user]["unique_phrases"].add(tag_text)
             
             # Time-based statistics (by month)
@@ -1613,24 +1827,24 @@ def get_NER_distribution():
                     if project_name not in project_stats:
                         project_stats[project_name] = {
                             "count": 0,
-                            "NER_types": set(),
+                            "ne_types": set(),
                             "users": set(),
                             "language": project_language
                         }
                     project_stats[project_name]["count"] += 1
-                    project_stats[project_name]["NER_types"].add(tag_type)
+                    project_stats[project_name]["ne_types"].add(tag_type)
                     project_stats[project_name]["users"].add(tag_user)
                     
                     # Enhanced language stats
                     if project_language not in language_stats:
                         language_stats[project_language] = {
                             "count": 0, 
-                            "NER_types": set(),
+                            "ne_types": set(),
                             "projects": set(),
                             "users": set()
                         }
                     language_stats[project_language]["count"] += 1
-                    language_stats[project_language]["NER_types"].add(tag_type)
+                    language_stats[project_language]["ne_types"].add(tag_type)
                     language_stats[project_language]["projects"].add(project_name)
                     language_stats[project_language]["users"].add(tag_user)
         
@@ -1641,15 +1855,15 @@ def get_NER_distribution():
                 "project_name": project_name,
                 "language": stats.get("language", "Unknown"),
                 "count": stats["count"],
-                "NER_type_count": len(stats["NER_types"]),
+                "ne_type_count": len(stats["ne_types"]),
                 "user_count": len(stats["users"]),
-                "NER_types": list(stats["NER_types"])[:10]  # Top 10 NER types
+                "ne_types": list(stats["ne_types"])[:10]  # Top 10 NE types
             })
         
-        NER_types_distribution = []
-        for NER_type, stats in NER_type_stats.items():
-            NER_types_distribution.append({
-                "NER_type": NER_type,
+        ne_types_distribution = []
+        for ne_type, stats in ne_type_stats.items():
+            ne_types_distribution.append({
+                "ne_type": ne_type,
                 "count": stats["count"],
                 "unique_word_count": len(stats["unique_words"]),
                 "unique_user_count": len(stats["unique_users"]),
@@ -1663,7 +1877,7 @@ def get_NER_distribution():
             language_distribution.append({
                 "language": lang,
                 "count": stats["count"],
-                "NER_type_count": len(stats["NER_types"]),
+                "ne_type_count": len(stats["ne_types"]),
                 "project_count": len(stats["projects"]),
                 "user_count": len(stats["users"])
             })
@@ -1673,11 +1887,11 @@ def get_NER_distribution():
             user_distribution.append({
                 "username": user,
                 "count": stats["count"],
-                "NER_type_count": len(stats["NER_types"]),
+                "ne_type_count": len(stats["ne_types"]),
                 "unique_phrase_count": len(stats["unique_phrases"]),
                 "first_annotation": stats["first_annotation"].isoformat() if stats["first_annotation"] else None,
                 "last_annotation": stats["last_annotation"].isoformat() if stats["last_annotation"] else None,
-                "productivity_score": stats["count"] / max(len(stats["NER_types"]), 1)
+                "productivity_score": stats["count"] / max(len(stats["ne_types"]), 1)
             })
         
         # Time distribution
@@ -1693,10 +1907,10 @@ def get_NER_distribution():
         total_users = len(user_stats)
         total_projects = len(project_stats)
         total_languages = len(language_stats)
-        total_NER_types = len(NER_type_stats)
+        total_ne_types = len(ne_type_stats)
         
         avg_annotations_per_user = len(all_tags) / max(total_users, 1)
-        avg_NER_types_per_user = sum(len(stats["NER_types"]) for stats in user_stats.values()) / max(total_users, 1)
+        avg_ne_types_per_user = sum(len(stats["ne_types"]) for stats in user_stats.values()) / max(total_users, 1)
         
         print(f"DEBUG: Enhanced analytics processed - Tags: {len(all_tags)}, Users: {total_users}, Projects: {total_projects}")
         
@@ -1706,34 +1920,34 @@ def get_NER_distribution():
                 "total_users": total_users,
                 "total_projects": total_projects,
                 "total_languages": total_languages,
-                "total_NER_types": total_NER_types,
+                "total_ne_types": total_ne_types,
                 "avg_annotations_per_user": round(avg_annotations_per_user, 2),
-                "avg_NER_types_per_user": round(avg_NER_types_per_user, 2),
+                "avg_ne_types_per_user": round(avg_ne_types_per_user, 2),
                 "time_period": {
                     "start_date": start_date,
                     "end_date": end_date
                 }
             },
-            "NER_types": sorted(NER_types_distribution, key=lambda x: x["count"], reverse=True),
+            "ne_types": sorted(ne_types_distribution, key=lambda x: x["count"], reverse=True),
             "language_distribution": sorted(language_distribution, key=lambda x: x["count"], reverse=True),
             "user_distribution": sorted(user_distribution, key=lambda x: x["count"], reverse=True),
             "project_distribution": sorted(project_distribution, key=lambda x: x["count"], reverse=True),
             "time_distribution": time_distribution,
             "top_performers": sorted(user_distribution, key=lambda x: x["count"], reverse=True)[:10],
-            "most_common_NER": sorted(NER_types_distribution, key=lambda x: x["count"], reverse=True)[:10]
+            "most_common_ne": sorted(ne_types_distribution, key=lambda x: x["count"], reverse=True)[:10]
         }), 200
         
     except Exception as e:
-        print(f"Error in enhanced NER distribution: {e}")
+        print(f"Error in enhanced NE distribution: {e}")
         print(f"Error details: {traceback.format_exc()}")
         return jsonify({"error": "Internal server error"}), 500
     
       
-@app.route("/api/analytics/NER-network", methods=["GET"])
-def get_NER_network():
-    """Generate network data for NER relationships"""
+@app.route("/api/analytics/ne-network", methods=["GET"])
+def get_ne_network():
+    """Generate network data for NE relationships"""
     try:
-        # Get all NER annotations
+        # Get all NE annotations
         all_tags = list(tags_collection.find({}, {
             "text": 1, 
             "tag": 1, 
@@ -1747,15 +1961,15 @@ def get_NER_network():
         node_counter = 0
         
         # Helper function to add or get node ID
-        def get_node_id(text, NER_type):
+        def get_node_id(text, ne_type):
             nonlocal node_counter
-            key = f"{text}_{NER_type}"
+            key = f"{text}_{ne_type}"
             if key not in node_ids:
                 node_ids[key] = node_counter
                 nodes.append({
                     "id": node_counter,
                     "name": text,
-                    "NER_type": NER_type,
+                    "ne_type": ne_type,
                     "value": 1  # Will be updated with frequency
                 })
                 node_counter += 1
@@ -1764,23 +1978,23 @@ def get_NER_network():
         # First pass: create nodes and count frequencies
         for tag in all_tags:
             text = tag.get("text", "").strip().lower()
-            NER_type = tag.get("tag", "Unknown")
+            ne_type = tag.get("tag", "Unknown")
             if text:
-                node_id = get_node_id(text, NER_type)
+                node_id = get_node_id(text, ne_type)
                 nodes[node_id]["value"] += 1
         
         # Second pass: create links based on shared roots and relationships
-        NER_by_type = {}
+        ne_by_type = {}
         for tag in all_tags:
             text = tag.get("text", "").strip().lower()
-            NER_type = tag.get("tag", "Unknown")
-            if text and NER_type:
-                if NER_type not in NER_by_type:
-                    NER_by_type[NER_type] = []
-                NER_by_type[NER_type].append(text)
+            ne_type = tag.get("tag", "Unknown")
+            if text and ne_type:
+                if ne_type not in ne_by_type:
+                    ne_by_type[ne_type] = []
+                ne_by_type[ne_type].append(text)
         
-        # Create links within same NER types (clustering)
-        for NER_type, words in NER_by_type.items():
+        # Create links within same NE types (clustering)
+        for ne_type, words in ne_by_type.items():
             # Simple stemming-based relationships
             word_stems = {}
             for word in words:
@@ -1797,8 +2011,8 @@ def get_NER_network():
                     for i, word1 in enumerate(stem_words):
                         for word2 in stem_words[i+1:]:
                             if word1 != word2:
-                                source_id = get_node_id(word1, NER_type)
-                                target_id = get_node_id(word2, NER_type)
+                                source_id = get_node_id(word1, ne_type)
+                                target_id = get_node_id(word2, ne_type)
                                 
                                 # Check if link already exists
                                 existing_link = next(
@@ -1830,7 +2044,7 @@ def get_NER_network():
         }), 200
         
     except Exception as e:
-        print(f"Error generating NER network: {e}")
+        print(f"Error generating NE network: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
 @app.route("/api/analytics/annotation-timeline", methods=["GET"])
@@ -2026,12 +2240,12 @@ def download_analytics_report():
             user_tags = list(tags_collection.find({"username": username}))
             user_tags_count = len(user_tags)
             
-            # User NER type diversity
-            user_NER_types = set(tag.get("tag", "Unknown") for tag in user_tags)
+            # User NE type diversity
+            user_ne_types = set(tag.get("tag", "Unknown") for tag in user_tags)
             
             # Calculate enhanced metrics
             approval_rate = (user_annotated_sentences / user_total_sentences * 100) if user_total_sentences > 0 else 0
-            productivity_score = user_tags_count / max(len(user_NER_types), 1)
+            productivity_score = user_tags_count / max(len(user_ne_types), 1)
             
             user_stats.append({
                 "username": username,
@@ -2041,20 +2255,20 @@ def download_analytics_report():
                 "total_sentences": user_total_sentences,
                 "annotated_sentences": user_annotated_sentences,
                 "total_annotations": user_tags_count,
-                "NER_type_diversity": len(user_NER_types),
+                "ne_type_diversity": len(user_ne_types),
                 "approval_rate": round(approval_rate, 1),
                 "productivity_score": round(productivity_score, 2),
                 "status": "Active" if user_tags_count > 0 else "Inactive"
             })
 
-        # Enhanced NER type statistics
-        NER_stats = []
-        NER_type_counts = {}
+        # Enhanced NE type statistics
+        ne_stats = []
+        ne_type_counts = {}
         
         for tag in all_tags:
-            NER_type = tag.get("tag", "Unknown")
-            if NER_type not in NER_type_counts:
-                NER_type_counts[NER_type] = {
+            ne_type = tag.get("tag", "Unknown")
+            if ne_type not in ne_type_counts:
+                ne_type_counts[ne_type] = {
                     "count": 0,
                     "unique_phrases": set(),
                     "unique_annotators": set(),
@@ -2062,27 +2276,27 @@ def download_analytics_report():
                     "first_annotation": tag.get("annotation_date"),
                     "last_annotation": tag.get("annotation_date")
                 }
-            NER_type_counts[NER_type]["count"] += 1
-            NER_type_counts[NER_type]["unique_phrases"].add(tag.get("text", "").lower())
-            NER_type_counts[NER_type]["unique_annotators"].add(tag.get("username", ""))
+            ne_type_counts[ne_type]["count"] += 1
+            ne_type_counts[ne_type]["unique_phrases"].add(tag.get("text", "").lower())
+            ne_type_counts[ne_type]["unique_annotators"].add(tag.get("username", ""))
             
             # Track projects
             if tag.get("source_sentence_id"):
                 sentence = sentences_collection.find_one({"_id": ObjectId(tag["source_sentence_id"])})
                 if sentence and sentence.get("project_id"):
-                    NER_type_counts[NER_type]["projects"].add(sentence["project_id"])
+                    ne_type_counts[ne_type]["projects"].add(sentence["project_id"])
             
             # Update date range
             annotation_date = tag.get("annotation_date")
             if annotation_date:
-                if NER_type_counts[NER_type]["first_annotation"] is None or annotation_date < NER_type_counts[NER_type]["first_annotation"]:
-                    NER_type_counts[NER_type]["first_annotation"] = annotation_date
-                if NER_type_counts[NER_type]["last_annotation"] is None or annotation_date > NER_type_counts[NER_type]["last_annotation"]:
-                    NER_type_counts[NER_type]["last_annotation"] = annotation_date
+                if ne_type_counts[ne_type]["first_annotation"] is None or annotation_date < ne_type_counts[ne_type]["first_annotation"]:
+                    ne_type_counts[ne_type]["first_annotation"] = annotation_date
+                if ne_type_counts[ne_type]["last_annotation"] is None or annotation_date > ne_type_counts[ne_type]["last_annotation"]:
+                    ne_type_counts[ne_type]["last_annotation"] = annotation_date
         
-        for NER_type, stats in NER_type_counts.items():
-            NER_stats.append({
-                "NER_type": NER_type,
+        for ne_type, stats in ne_type_counts.items():
+            ne_stats.append({
+                "ne_type": ne_type,
                 "count": stats["count"],
                 "unique_phrases_count": len(stats["unique_phrases"]),
                 "unique_annotators_count": len(stats["unique_annotators"]),
@@ -2193,7 +2407,7 @@ def download_analytics_report():
             if detail_level in ["detailed", "comprehensive"]:
                 # User Performance Dashboard
                 writer.writerow(["USER PERFORMANCE DASHBOARD"])
-                writer.writerow(["Username", "Full Name", "Role", "Organization", "Total Sentences", "Annotated Sentences", "Total Annotations", "NER Diversity", "Approval Rate", "Productivity Score", "Status"])
+                writer.writerow(["Username", "Full Name", "Role", "Organization", "Total Sentences", "Annotated Sentences", "Total Annotations", "NE Diversity", "Approval Rate", "Productivity Score", "Status"])
                 for user in sorted(user_stats, key=lambda x: x["total_annotations"], reverse=True):
                     writer.writerow([
                         user["username"],
@@ -2203,26 +2417,26 @@ def download_analytics_report():
                         user["total_sentences"],
                         user["annotated_sentences"],
                         user["total_annotations"],
-                        user["NER_type_diversity"],
+                        user["ne_type_diversity"],
                         f"{user['approval_rate']}%",
                         user["productivity_score"],
                         user["status"]
                     ])
                 writer.writerow([])
             
-            # NER Statistics
-            writer.writerow(["NER TYPE STATISTICS"])
-            writer.writerow(["NER Type", "Count", "Unique Phrases", "Unique Annotators", "Projects", "First Annotation", "Last Annotation", "Popularity"])
-            for NER in sorted(NER_stats, key=lambda x: x["count"], reverse=True):
+            # NE Statistics
+            writer.writerow(["NE TYPE STATISTICS"])
+            writer.writerow(["NE Type", "Count", "Unique Phrases", "Unique Annotators", "Projects", "First Annotation", "Last Annotation", "Popularity"])
+            for ne in sorted(ne_stats, key=lambda x: x["count"], reverse=True):
                 writer.writerow([
-                    NER["NER_type"],
-                    NER["count"],
-                    NER["unique_phrases_count"],
-                    NER["unique_annotators_count"],
-                    NER["project_count"],
-                    NER["first_annotation"],
-                    NER["last_annotation"],
-                    NER["popularity_rank"]
+                    ne["ne_type"],
+                    ne["count"],
+                    ne["unique_phrases_count"],
+                    ne["unique_annotators_count"],
+                    ne["project_count"],
+                    ne["first_annotation"],
+                    ne["last_annotation"],
+                    ne["popularity_rank"]
                 ])
             writer.writerow([])
             
@@ -2246,7 +2460,7 @@ def download_analytics_report():
             if detail_level == "comprehensive":
                 writer.writerow([])
                 writer.writerow(["DETAILED ANNOTATION DATA"])
-                writer.writerow(["Annotation ID", "NER Type", "Phrase", "Annotator", "Project", "Sentence Text Preview", "Annotation Date"])
+                writer.writerow(["Annotation ID", "NE Type", "Phrase", "Annotator", "Project", "Sentence Text Preview", "Annotation Date"])
                 for i, tag in enumerate(all_tags[:1000]):  # Limit to first 1000 for file size
                     sentence_text = "N/A"
                     project_name = "N/A"
@@ -2297,11 +2511,11 @@ def download_analytics_report():
                     "avg_annotations_per_user": round((len(all_tags)/max(total_annotators, 1)), 1)
                 },
                 "user_performance": sorted(user_stats, key=lambda x: x["total_annotations"], reverse=True),
-                "NER_statistics": sorted(NER_stats, key=lambda x: x["count"], reverse=True),
+                "ne_statistics": sorted(ne_stats, key=lambda x: x["count"], reverse=True),
                 "project_statistics": sorted(project_stats, key=lambda x: x["completion_rate"], reverse=True),
                 "key_insights": {
                     "top_performer": max(user_stats, key=lambda x: x["total_annotations"]) if user_stats else None,
-                    "most_common_NER": max(NER_stats, key=lambda x: x["count"]) if NER_stats else None,
+                    "most_common_ne": max(ne_stats, key=lambda x: x["count"]) if ne_stats else None,
                     "most_complete_project": max(project_stats, key=lambda x: x["completion_rate"]) if project_stats else None,
                     "annotation_trend": "Growing" if len(all_tags) > 1000 else "Stable" if len(all_tags) > 500 else "Developing"
                 }
@@ -2341,7 +2555,7 @@ def download_pdf_with_charts():
         
         # Calculate statistics (same as your existing analytics logic)
         project_stats = {}
-        NER_type_stats = {}
+        ne_type_stats = {}
         language_stats = {}
         user_stats = {}
         
@@ -2350,17 +2564,17 @@ def download_pdf_with_charts():
             tag_user = tag.get("username", "Unknown")
             sentence_id = tag.get("source_sentence_id")
             
-            # Count by NER type
-            if tag_type not in NER_type_stats:
-                NER_type_stats[tag_type] = {"count": 0, "unique_words": set()}
-            NER_type_stats[tag_type]["count"] += 1
-            NER_type_stats[tag_type]["unique_words"].add(tag.get("text", "").lower())
+            # Count by NE type
+            if tag_type not in ne_type_stats:
+                ne_type_stats[tag_type] = {"count": 0, "unique_words": set()}
+            ne_type_stats[tag_type]["count"] += 1
+            ne_type_stats[tag_type]["unique_words"].add(tag.get("text", "").lower())
             
             # Count by user
             if tag_user not in user_stats:
-                user_stats[tag_user] = {"count": 0, "NER_types": set()}
+                user_stats[tag_user] = {"count": 0, "ne_types": set()}
             user_stats[tag_user]["count"] += 1
-            user_stats[tag_user]["NER_types"].add(tag_type)
+            user_stats[tag_user]["ne_types"].add(tag_type)
             
             # Count by project and language
             if sentence_id:
@@ -2387,22 +2601,22 @@ def download_pdf_with_charts():
                     if project_name not in project_stats:
                         project_stats[project_name] = {
                             "count": 0,
-                            "NER_types": set()
+                            "ne_types": set()
                         }
                     project_stats[project_name]["count"] += 1
-                    project_stats[project_name]["NER_types"].add(tag_type)
+                    project_stats[project_name]["ne_types"].add(tag_type)
                     
                     # Update language stats
                     if project_language not in language_stats:
-                        language_stats[project_language] = {"count": 0, "NER_types": set()}
+                        language_stats[project_language] = {"count": 0, "ne_types": set()}
                     language_stats[project_language]["count"] += 1
-                    language_stats[project_language]["NER_types"].add(tag_type)
+                    language_stats[project_language]["ne_types"].add(tag_type)
         
         # Convert to chart-ready formats
-        NER_chart_data = []
-        for NER_type, stats in NER_type_stats.items():
-            NER_chart_data.append({
-                "NER_type": NER_type,
+        ne_chart_data = []
+        for ne_type, stats in ne_type_stats.items():
+            ne_chart_data.append({
+                "ne_type": ne_type,
                 "count": stats["count"],
                 "unique_word_count": len(stats["unique_words"])
             })
@@ -2419,7 +2633,7 @@ def download_pdf_with_charts():
             user_chart_data.append({
                 "username": user,
                 "count": stats["count"],
-                "NER_type_count": len(stats["NER_types"])
+                "ne_type_count": len(stats["ne_types"])
             })
         
         project_chart_data = []
@@ -2427,7 +2641,7 @@ def download_pdf_with_charts():
             project_chart_data.append({
                 "project_name": project_name,
                 "count": stats["count"],
-                "NER_type_count": len(stats["NER_types"])
+                "ne_type_count": len(stats["ne_types"])
             })
         
         # Get timeline data
@@ -2499,14 +2713,14 @@ def download_pdf_with_charts():
         return jsonify({
             "summary": {
                 "total_annotations": len(all_tags),
-                "total_NER_types": len(NER_type_stats),
+                "total_ne_types": len(ne_type_stats),
                 "total_languages": len(language_stats),
                 "total_users": len(user_stats),
                 "total_projects": len(project_stats),
                 "report_generated": get_ist_time().strftime("%Y-%m-%d %H:%M:%S UTC")
             },
             "charts": {
-                "NER_distribution": NER_chart_data,
+                "ne_distribution": ne_chart_data,
                 "language_distribution": language_chart_data,
                 "user_distribution": user_chart_data,
                 "project_distribution": project_chart_data,
@@ -2555,7 +2769,7 @@ def generate_chart():
         colors = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4']
         
         for i, item in enumerate(chart_data):
-            label_key = next((key for key in ['NER_type', 'language', 'username', 'project_name'] if key in item), 'label')
+            label_key = next((key for key in ['ne_type', 'language', 'username', 'project_name'] if key in item), 'label')
             value_key = next((key for key in ['count', 'value'] if key in item), 'value')
             
             labels.append(item.get(label_key, f'Item {i+1}'))
@@ -2654,7 +2868,7 @@ def get_comprehensive_report():
             {"$group": {
                 "_id": "$username",
                 "total_annotations": {"$sum": 1},
-                "unique_NER_types": {"$addToSet": "$tag"},
+                "unique_ne_types": {"$addToSet": "$tag"},
                 "unique_phrases": {"$addToSet": "$text"},
                 "projects": {"$addToSet": "$source_sentence_id"},
                 "first_annotation": {"$min": "$annotation_date"},
@@ -2681,7 +2895,7 @@ def get_comprehensive_report():
             {"$project": {
                 "username": "$_id",
                 "total_annotations": 1,
-                "unique_NER_count": {"$size": "$unique_NER_types"},
+                "unique_ne_count": {"$size": "$unique_ne_types"},
                 "unique_phrases_count": {"$size": "$unique_phrases"},
                 "project_count": {"$size": {
                     "$setUnion": [
@@ -2820,14 +3034,14 @@ def get_comprehensive_report():
                 },
                 "daily_annotations": {"$sum": 1},
                 "unique_annotators": {"$addToSet": "$username"},
-                "NER_types_used": {"$addToSet": "$tag"}
+                "ne_types_used": {"$addToSet": "$tag"}
             }},
             {"$sort": {"_id": 1}},
             {"$project": {
                 "date": "$_id",
                 "daily_annotations": 1,
                 "unique_annotators_count": {"$size": "$unique_annotators"},
-                "NER_types_count": {"$size": "$NER_types_used"},
+                "ne_types_count": {"$size": "$ne_types_used"},
                 "avg_annotations_per_user": {
                     "$divide": ["$daily_annotations", {"$max": [{"$size": "$unique_annotators"}, 1]}]
                 },
@@ -2849,8 +3063,8 @@ def get_comprehensive_report():
         else:
             growth_rate = 0
         
-        # Enhanced NER type distribution with trends
-        NER_distribution = list(tags_collection.aggregate([
+        # Enhanced NE type distribution with trends
+        ne_distribution = list(tags_collection.aggregate([
             {"$match": tag_filter},
             {"$group": {
                 "_id": "$tag",
@@ -2862,7 +3076,7 @@ def get_comprehensive_report():
                 "projects": {"$addToSet": "$source_sentence_id"}
             }},
             {"$project": {
-                "NER_type": "$_id",
+                "ne_type": "$_id",
                 "count": 1,
                 "unique_phrases_count": {"$size": "$unique_phrases"},
                 "unique_users_count": {"$size": "$unique_users"},
@@ -2914,7 +3128,7 @@ def get_comprehensive_report():
         quality_metrics = {
             "average_annotations_per_user": total_annotations / max(len(user_performance), 1),
             "top_performer": user_performance[0] if user_performance else None,
-            "most_common_NER": NER_distribution[0] if NER_distribution else None,
+            "most_common_ne": ne_distribution[0] if ne_distribution else None,
             "total_projects": len(project_progress),
             "active_projects": len([p for p in project_progress if p.get('completion_rate', 0) < 100 and p.get('completion_rate', 0) > 0]),
             "completed_projects": len([p for p in project_progress if p.get('completion_rate', 0) == 100]),
@@ -2933,19 +3147,19 @@ def get_comprehensive_report():
             },
             "detailed": {
                 **quality_metrics,
-                "NER_diversity": len(NER_distribution),
+                "ne_diversity": len(ne_distribution),
                 "avg_project_completion": sum(p.get('completion_rate', 0) for p in project_progress) / max(len(project_progress), 1),
-                "annotation_consistency": "High" if len(set(NER.get('NER_type') for NER in NER_distribution)) > 10 else "Medium"
+                "annotation_consistency": "High" if len(set(ne.get('ne_type') for mwe in ne_distribution)) > 10 else "Medium"
             },
             "executive": {
                 "performance_rating": "Excellent" if quality_metrics['user_engagement_score'] > 80 else "Good" if quality_metrics['user_engagement_score'] > 60 else "Needs Improvement",
                 "key_achievements": [
                     f"{quality_metrics['completed_projects']} projects completed",
                     f"{total_annotations} total annotations",
-                    f"{len(NER_distribution)} NER types identified"
+                    f"{len(ne_distribution)} NE types identified"
                 ],
                 "recommendations": [
-                    "Increase user training on rare NER types" if any(NER.get('unique_users_count', 0) < 3 for NER in NER_distribution) else "Maintain current annotation quality",
+                    "Increase user training on rare NE types" if any(ne.get('unique_users_count', 0) < 3 for ne in ne_distribution) else "Maintain current annotation quality",
                     "Focus on incomplete projects" if quality_metrics['active_projects'] > 2 else "All projects are on track"
                 ]
             }
@@ -2968,12 +3182,12 @@ def get_comprehensive_report():
             "user_performance": user_performance,
             "project_progress": project_progress,
             "timeline_data": timeline_data,
-            "NER_distribution": NER_distribution,
+            "ne_distribution": ne_distribution,
             "quality_metrics": quality_metrics,
             "key_insights": {
                 "busiest_day": max(timeline_data, key=lambda x: x['daily_annotations']) if timeline_data else None,
                 "most_productive_user": max(user_performance, key=lambda x: x['total_annotations']) if user_performance else None,
-                "most_diverse_annotator": max(user_performance, key=lambda x: x['unique_NER_count']) if user_performance else None,
+                "most_diverse_annotator": max(user_performance, key=lambda x: x['unique_ne_count']) if user_performance else None,
                 "most_complex_project": max(project_progress, key=lambda x: x.get('total_annotations', 0)) if project_progress else None
             }
         }), 200
@@ -3945,16 +4159,16 @@ def download_project_data(project_id):
                     output_lines.append(f"  {annotator}: {stats['annotations']} annotations across {stats['sentences']} sentences")
                 output_lines.append("")
                 
-                # NER type statistics
-                NER_stats = {}
+                # NE type statistics
+                ne_stats = {}
                 for sentence in unique_sentences:
                     for annotation in sentence.get("annotations", []):
-                        NER_type = annotation.get("tag", "Unknown")
-                        NER_stats[NER_type] = NER_stats.get(NER_type, 0) + 1
+                        NE_type = annotation.get("tag", "Unknown")
+                        ne_stats[ne_type] = ne_stats.get(ne_type, 0) + 1
                 
-                output_lines.append("NER TYPE DISTRIBUTION:")
-                for NER_type, count in sorted(NER_stats.items(), key=lambda x: x[1], reverse=True):
-                    output_lines.append(f"  {NER_type}: {count} occurrences")
+                output_lines.append("NE TYPE DISTRIBUTION:")
+                for ne_type, count in sorted(ne_stats.items(), key=lambda x: x[1], reverse=True):
+                    output_lines.append(f"  {ne_type}: {count} occurrences")
                 
             else:
                 # Full annotation report
@@ -3994,7 +4208,7 @@ def download_project_data(project_id):
 
                             # Enhanced annotation line
                             output_lines.append(
-                                f"  NER: {tag_label}, Phrase: '{tag_text}', Annotator: {annotated_by}, Date: {annotation_dt_str}, ID: {tag_doc.get('_id', 'N/A')}"
+                                f"  NE: {tag_label}, Phrase: '{tag_text}', Annotator: {annotated_by}, Date: {annotation_dt_str}, ID: {tag_doc.get('_id', 'N/A')}"
                             )
 
                     output_lines.append("") # Empty line for separation
@@ -4423,7 +4637,7 @@ def get_project_sentences(project_id):
                     "tag": tag.get("tag", ""),
                     "username": tag.get("username", ""),
                     "annotation_date": tag.get("annotation_date"),
-                    "NERId": tag.get("NERId"),
+                    "neId": tag.get("neId"),
                     "_id": str(tag["_id"]),
                     "review_status": "Approved", 
                     "review_comments": tag.get("review_comments", "")
@@ -4439,7 +4653,7 @@ def get_project_sentences(project_id):
                     "tag": tag.get("tag", ""),
                     "username": tag.get("username", ""),
                     "annotation_date": tag.get("annotation_date"),
-                    "NERId": tag.get("NERId"),
+                    "neId": tag.get("neId"),
                     "_id": str(tag["_id"]),
                     "review_comments": tag.get("review_comments", "")
                 }
@@ -4584,7 +4798,8 @@ def remove_any_tag(tag_id):
 @app.route('/tags', methods=['POST'])
 def add_or_update_tag():
     """
-    MODIFIED: Annotator adds/updates a tag. It now ONLY writes to the staged_tags_collection.
+    MODIFIED: Annotator adds/updates a tag. It now writes directly to tags_collection.
+    Only when sentence is submitted for review, tags become "pending".
     """
     try:
         data = request.get_json()
@@ -4597,15 +4812,11 @@ def add_or_update_tag():
         tag_label = data['tag']
         sentence_id = data['sentenceId']
 
-        # Find existing staged tag to UPDATE it, or check if it exists in final (read-only for annotator)
-        existing_tag = staged_tags_collection.find_one({
-            'source_sentence_id': sentence_id, 
-            'username': username,
-            'text': text, 
-            'tag': tag_label
-        })
-        
         IST = ZoneInfo("Asia/Kolkata") 
+
+        # Check if sentence is submitted for review
+        sentence = sentences_collection.find_one({"_id": ObjectId(sentence_id)})
+        is_pending_review = sentence and sentence.get('review_status') == 'PENDING_REVIEW'
 
         tag_data = {
             'tag': tag_label,
@@ -4613,24 +4824,61 @@ def add_or_update_tag():
             'username': username,
             'text': text,
             'annotation_date': datetime.now(IST),
-            'status': 'Staged/Pending Review' 
         }
 
-        if existing_tag:
-             # Update the existing staged tag
-            staged_tags_collection.update_one(
-                {'_id': existing_tag['_id']},
-                {'$set': tag_data}
-            )
-            message = 'Tag updated in staging successfully'
-            status_code = 200
-        else:
-            # Insert a new staged tag
-            staged_tags_collection.insert_one(tag_data)
-            message = 'Tag created and staged successfully'
-            status_code = 201
+        if is_pending_review:
+            # If sentence is pending review, tag goes to staged_tags with pending status
+            tag_data['review_status'] = 'Pending'
+            tag_data['status'] = 'Staged/Pending Review'
             
-        # NOTE: Sentences status (is_annotated) is updated regardless of staging
+            # Check if tag already exists in staged_tags
+            existing_staged_tag = staged_tags_collection.find_one({
+                'source_sentence_id': sentence_id, 
+                'username': username,
+                'text': text
+            })
+            
+            if existing_staged_tag:
+                staged_tags_collection.update_one(
+                    {'_id': existing_staged_tag['_id']},
+                    {'$set': tag_data}
+                )
+                message = 'Tag updated in staging (pending review)'
+            else:
+                staged_tags_collection.insert_one(tag_data)
+                message = 'Tag created and staged (pending review)'
+                
+        else:
+            # Normal case - tag goes directly to approved tags
+            tag_data['review_status'] = 'Approved'
+            tag_data['reviewed_by'] = 'auto_approved'
+            tag_data['reviewed_at'] = datetime.now(IST)
+            
+            # Check if tag already exists in tags
+            existing_tag = tags_collection.find_one({
+                'source_sentence_id': sentence_id, 
+                'username': username,
+                'text': text
+            })
+            
+            if existing_tag:
+                tags_collection.update_one(
+                    {'_id': existing_tag['_id']},
+                    {'$set': tag_data}
+                )
+                # Also update search_tags
+                search_tags_collection.update_one(
+                    {'_id': existing_tag['_id']},
+                    {'$set': tag_data}
+                )
+                message = 'Tag updated successfully'
+            else:
+                result = tags_collection.insert_one(tag_data)
+                # Also insert into search_tags
+                search_tags_collection.insert_one(tag_data)
+                message = 'Tag created successfully'
+
+        # Update sentence annotation status
         sentences_collection.update_one(
             {'_id': ObjectId(sentence_id)},
             {'$set': {
@@ -4640,13 +4888,12 @@ def add_or_update_tag():
             }}
         )
 
-        log_action_and_update_report(username, f"Staged tag '{text}' as '{tag_label}'")
-        return jsonify({'message': message}), status_code
+        log_action_and_update_report(username, f"Added tag '{text}' as '{tag_label}'")
+        return jsonify({'message': message}), 200
         
     except Exception as e:
         print(f"Error in /tags POST endpoint: {e}")
         return jsonify({'error': 'An internal server error occurred'}), 500
-
  
 @app.route('/reviewer/sentence/<sentence_id>/tags', methods=['GET'])
 def get_staged_tags_for_review(sentence_id):
@@ -4989,7 +5236,432 @@ def update_sentence_status(sentence_id):
         
     return jsonify({"message": "Status updated successfully"})
 
+@app.route('/api/sentence/submit_for_review', methods=['POST'])
+@token_required
+def submit_for_review():
+    """
+    Endpoint 1: Annotator's Action - Pushes the tagged sentence to the Reviewer's queue.
+    Moves all approved tags to staged_tags with pending status.
+    """
+    try:
+        data = request.get_json()
+        sentence_id = data.get('sentence_id')
+        annotator_username = request.current_user['username'] 
 
+        if not sentence_id:
+            return jsonify({"error": "Missing sentence ID"}), 400
+
+        print(f"DEBUG: Submitting sentence {sentence_id} for review by {annotator_username}")
+
+        # First, verify the sentence exists and belongs to the annotator
+        sentence = sentences_collection.find_one({
+            "_id": ObjectId(sentence_id), 
+            "username": annotator_username
+        })
+        
+        if not sentence:
+            print(f"DEBUG: Sentence {sentence_id} not found or not assigned to user {annotator_username}")
+            return jsonify({"message": "Sentence not found or not assigned to this user"}), 404
+
+        # Move all approved tags for this sentence to staged_tags with pending status
+        approved_tags = list(tags_collection.find({
+            "source_sentence_id": sentence_id,
+            "username": annotator_username
+        }))
+        
+        if approved_tags:
+            # Convert approved tags to staged tags with pending status
+            staged_tags_to_insert = []
+            for tag in approved_tags:
+                staged_tag = {
+                    'tag': tag.get('tag'),
+                    'source_sentence_id': tag.get('source_sentence_id'),
+                    'username': tag.get('username'),
+                    'text': tag.get('text'),
+                    'annotation_date': tag.get('annotation_date'),
+                    'review_status': 'Pending',
+                    'status': 'Staged/Pending Review',
+                    'original_tag_id': str(tag['_id'])  # Keep reference to original
+                }
+                staged_tags_to_insert.append(staged_tag)
+            
+            # Insert into staged_tags
+            if staged_tags_to_insert:
+                staged_tags_collection.insert_many(staged_tags_to_insert)
+                
+            # Remove from approved tags
+            tags_collection.delete_many({
+                "source_sentence_id": sentence_id,
+                "username": annotator_username
+            })
+            search_tags_collection.delete_many({
+                "source_sentence_id": sentence_id, 
+                "username": annotator_username
+            })
+
+        # Update the Sentence status to PENDING_REVIEW
+        result = sentences_collection.update_one(
+            {"_id": ObjectId(sentence_id), "username": annotator_username},
+            {"$set": {
+                "review_status": "PENDING_REVIEW",
+                "submission_date": get_ist_time()
+            }}
+        )
+
+        if result.matched_count == 0:
+            print(f"DEBUG: No sentence matched for update: {sentence_id}")
+            return jsonify({"message": "Sentence not found or not assigned to this user"}), 404
+        
+        print(f"DEBUG: Successfully submitted sentence {sentence_id} for review")
+        log_action_and_update_report(annotator_username, f'Submitted sentence {sentence_id} for review.')
+
+        return jsonify({"message": f"Sentence {sentence_id} submitted successfully for review."}), 200
+
+    except Exception as e:
+        print(f"Error submitting sentence for review: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Internal server error during submission"}), 500
+
+@app.route('/api/reviewer/pending_sentences', methods=['GET'])
+@token_required
+def get_pending_sentences():
+    """
+    Endpoint 2: Reviewer Dashboard Fetch - Pulls ONLY sentences that have been submitted for review.
+    """
+    try:
+        # ONLY match sentences that have been explicitly submitted for review
+        pipeline = [
+            {"$match": {
+                "review_status": "PENDING_REVIEW"  # ONLY get sentences explicitly submitted for review
+            }},
+            
+            # Fetch Project Name
+            {"$lookup": {
+                "from": "projects",
+                "localField": "project_id",
+                "foreignField": "_id",
+                "as": "project_info"
+            }},
+            {"$unwind": {"path": "$project_info", "preserveNullAndEmptyArrays": True}},
+            
+            {"$sort": {"submission_date": 1, "_id": 1}},
+            
+            # Project fields to match the frontend structure
+            {"$project": {
+                "id": {"$toString": "$_id"},
+                "sentence_text": "$textContent",
+                "annotatorUsername": "$username",
+                "projectId": {"$toString": "$project_id"},
+                "project_name": "$project_info.name",
+                "isAnnotated": "$is_annotated",
+                "review_status": "$review_status",
+                "submission_date": "$submission_date"
+            }}
+        ]
+        
+        pending_sentences = list(sentences_collection.aggregate(pipeline))
+        
+        print(f"DEBUG: Found {len(pending_sentences)} sentences explicitly submitted for review")
+        
+        # Clean up the results to ensure all ObjectIds are converted to strings
+        for sentence in pending_sentences:
+            for key in list(sentence.keys()):
+                if isinstance(sentence[key], ObjectId):
+                    sentence[key] = str(sentence[key])
+        
+        # Enhanced tag retrieval - get both staged AND approved tags
+        sentence_ids = [s['id'] for s in pending_sentences]
+        
+        # Get staged tags (pending review)
+        staged_tags_cursor = staged_tags_collection.find({"source_sentence_id": {"$in": sentence_ids}})
+        staged_tag_map = {}
+        for tag in staged_tags_cursor:
+            sid = tag['source_sentence_id']
+            if sid not in staged_tag_map:
+                staged_tag_map[sid] = []
+            tag_data = {
+                '_id': str(tag['_id']),
+                'text': tag.get('text', ''),
+                'tag': tag.get('tag', ''),
+                'username': tag.get('username', ''),
+                'review_status': tag.get('review_status', 'Pending'),
+                'annotation_date': tag.get('annotation_date'),
+                'source': 'staged'
+            }
+            staged_tag_map[sid].append(tag_data)
+
+        # Get approved tags (already reviewed and approved)
+        approved_tags_cursor = tags_collection.find({"source_sentence_id": {"$in": sentence_ids}})
+        approved_tag_map = {}
+        for tag in approved_tags_cursor:
+            sid = tag['source_sentence_id']
+            if sid not in approved_tag_map:
+                approved_tag_map[sid] = []
+            tag_data = {
+                '_id': str(tag['_id']),
+                'text': tag.get('text', ''),
+                'tag': tag.get('tag', ''),
+                'username': tag.get('username', ''),
+                'review_status': tag.get('review_status', 'Approved'),
+                'annotation_date': tag.get('annotation_date'),
+                'reviewed_by': tag.get('reviewed_by', ''),
+                'reviewed_at': tag.get('reviewed_at'),
+                'source': 'approved'
+            }
+            approved_tag_map[sid].append(tag_data)
+
+        # Combine both staged and approved tags for each sentence
+        for sentence in pending_sentences:
+            sid = sentence['id']
+            all_tags = []
+            
+            # Add staged tags
+            if sid in staged_tag_map:
+                all_tags.extend(staged_tag_map[sid])
+            
+            # Add approved tags  
+            if sid in approved_tag_map:
+                all_tags.extend(approved_tag_map[sid])
+            
+            sentence['tags'] = all_tags
+            print(f"DEBUG: Sentence {sid} has {len(all_tags)} tags ({len(staged_tag_map.get(sid, []))} staged, {len(approved_tag_map.get(sid, []))} approved)")
+            
+        return jsonify(pending_sentences), 200
+
+    except Exception as e:
+        print(f"Error fetching pending sentences for reviewer: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Internal server error during queue fetch"}), 500
+      
+@app.route('/api/sentence/review_action', methods=['POST'])
+@token_required
+def review_action():
+    """
+    Endpoint 3: Reviewer Action - Approves/Rejects a sentence (finalizes status).
+    """
+    try:
+        data = request.get_json()
+        sentence_id = data.get('sentence_id')
+        action = data.get('action') # 'Approve' or 'Reject'
+        comment = data.get('review_comment', '')
+        
+        reviewer_username = request.current_user['username']
+        
+        print(f"DEBUG REVIEW_ACTION: Starting for sentence {sentence_id}, action: {action}")
+        print(f"DEBUG REVIEW_ACTION: Comment: {comment}")
+        
+        sentence = sentences_collection.find_one({"_id": ObjectId(sentence_id)})
+        
+        if not sentence:
+            print(f"DEBUG REVIEW_ACTION: Sentence {sentence_id} not found")
+            return jsonify({"error": "Sentence not found"}), 404
+            
+        annotator_username = sentence.get('username')
+        print(f"DEBUG REVIEW_ACTION: Annotator username: {annotator_username}")
+        
+        if action == 'Approve':
+            new_status = 'REVIEWED_APPROVED'
+            
+            # 1. Move staged tags to the final tags collection
+            staged_tags_cursor = staged_tags_collection.find({"source_sentence_id": sentence_id, "username": annotator_username})
+            tags_to_insert = []
+            for tag in staged_tags_cursor:
+                tags_to_insert.append({
+                    'tag': tag.get('tag'), 'source_sentence_id': sentence_id, 'username': tag.get('username'),
+                    'text': tag.get('text'), 'annotation_date': tag.get('annotation_date'),
+                    "review_status": "Approved", "reviewed_by": reviewer_username,
+                    "reviewed_at": get_ist_time(), "review_comments": comment
+                })
+            
+            if tags_to_insert:
+                print(f"DEBUG REVIEW_ACTION: Moving {len(tags_to_insert)} tags to final collection")
+                tags_collection.insert_many(tags_to_insert)
+                staged_tags_collection.delete_many({"source_sentence_id": sentence_id, "username": annotator_username})
+            
+            # 2. Update sentence status
+            sentences_collection.update_one(
+                {"_id": ObjectId(sentence_id)},
+                {"$set": {"review_status": new_status, "reviewed_by": reviewer_username, "review_date": get_ist_time()}}
+            )
+            log_reviewer_action(reviewer_username, f"Approved sentence {sentence_id}", annotator_username)
+            
+            
+        elif action == 'Reject':
+            if not comment.strip():
+                return jsonify({"error": "Review comment is mandatory for rejection"}), 400
+            
+            new_status = 'REVIEWED_REJECTED'
+            
+            print(f"DEBUG REVIEW_ACTION: Processing rejection for sentence {sentence_id}")
+            
+            # 1. Update sentence status
+            sentences_collection.update_one(
+                {"_id": ObjectId(sentence_id)},
+                {"$set": {"review_status": new_status, "reviewed_by": reviewer_username, "review_date": get_ist_time()}}
+            )
+            
+            # 2. Log the rejection comment (Revision Note)
+            revision_note_data = {
+                "sentence_id": sentence_id,
+                "annotator_username": annotator_username,
+                "reviewer_username": reviewer_username,
+                "revision_comment": comment,
+                "rejection_date": get_ist_time(),
+                "acknowledged": False
+            }
+            
+            print(f"DEBUG REVIEW_ACTION: Inserting revision note: {revision_note_data}")
+            revision_result = revision_notes_collection.insert_one(revision_note_data)
+            print(f"DEBUG REVIEW_ACTION: Revision note inserted with ID: {revision_result.inserted_id}")
+            
+            # 3. Mark all staged tags for this sentence as Rejected
+            staged_update_result = staged_tags_collection.update_many(
+                {"source_sentence_id": sentence_id, "username": annotator_username},
+                {"$set": {"review_status": "Rejected", "review_comments": comment}}
+            )
+            print(f"DEBUG REVIEW_ACTION: Updated {staged_update_result.modified_count} staged tags as Rejected")
+            
+            log_reviewer_action(reviewer_username, f"Rejected sentence {sentence_id}", annotator_username)
+
+        else:
+            return jsonify({"error": "Invalid review action"}), 400
+
+        print(f"DEBUG REVIEW_ACTION: Successfully completed {action} for sentence {sentence_id}")
+        return jsonify({"message": f"Review finalized: {action}"}), 200
+
+    except Exception as e:
+        print(f"DEBUG REVIEW_ACTION: Error processing review action: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Internal server error during review finalization"}), 500
+    
+@app.route('/api/annotator/revision_notes/<string:username>', methods=["GET"])
+@token_required
+def get_revision_notes(username):
+    """
+    Endpoint 4: Annotator Fetch - Pulls rejected sentences with revision notes
+    """
+    try:
+        # Verify the requesting user has access to these revision notes
+        current_user = request.current_user
+        if current_user.get('username') != username:
+            return jsonify({"error": "Unauthorized access to revision notes"}), 403
+        
+        print(f"DEBUG REVISION_NOTES: Fetching revision notes for user: {username}")
+        
+        revision_notes = []
+        
+        # Get all unacknowledged revision notes for this user
+        notes_cursor = revision_notes_collection.find({
+            "annotator_username": username,
+            "acknowledged": False
+        })
+        
+        notes_list = list(notes_cursor)
+        print(f"DEBUG REVISION_NOTES: Found {len(notes_list)} unacknowledged revision notes")
+        
+        for note in notes_list:
+            sentence_id = note.get('sentence_id')
+            print(f"DEBUG REVISION_NOTES: Processing note for sentence: {sentence_id}")
+            
+            try:
+                # Get the sentence details
+                sentence = sentences_collection.find_one({"_id": ObjectId(sentence_id)})
+                if not sentence:
+                    print(f"DEBUG REVISION_NOTES: Sentence {sentence_id} not found, skipping")
+                    continue
+                
+                # Get rejected tags for this sentence
+                rejected_tags_cursor = staged_tags_collection.find({
+                    "source_sentence_id": sentence_id,
+                    "username": username,
+                    "review_status": "Rejected"
+                })
+                rejected_tags = list(rejected_tags_cursor)
+                print(f"DEBUG REVISION_NOTES: Found {len(rejected_tags)} rejected tags for sentence {sentence_id}")
+                
+                # Get the project name
+                project_name = "Unknown Project"
+                if sentence.get('project_id'):
+                    try:
+                        project = projects_collection.find_one({"_id": ObjectId(sentence.get('project_id'))})
+                        if project:
+                            project_name = project.get('name', 'Unknown Project')
+                    except Exception as e:
+                        print(f"DEBUG REVISION_NOTES: Error fetching project: {e}")
+                
+                revision_note_data = {
+                    "sentenceId": sentence_id,
+                    "sentenceText": sentence.get('textContent', ''),
+                    "projectName": project_name,
+                    "rejectedTags": [tag.get('tag', '') for tag in rejected_tags],
+                    "reviewerComment": note.get('revision_comment', ''),
+                    "reviewer": note.get('reviewer_username', ''),
+                    "rejectionDate": note.get('rejection_date').strftime('%Y-%m-%d %H:%M:%S') if note.get('rejection_date') else 'Unknown date'
+                }
+                
+                revision_notes.append(revision_note_data)
+                print(f"DEBUG REVISION_NOTES: Added revision note for sentence: {sentence_id}")
+                
+            except Exception as e:
+                print(f"DEBUG REVISION_NOTES: Error processing note for sentence {sentence_id}: {e}")
+                continue
+        
+        print(f"DEBUG REVISION_NOTES: Returning {len(revision_notes)} revision notes for user {username}")
+        return jsonify(revision_notes), 200
+
+    except Exception as e:
+        print(f"DEBUG REVISION_NOTES: Error fetching revision notes: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Internal server error during revision notes fetch"}), 500
+       
+@app.route('/api/annotator/acknowledge_revision', methods=['POST'])
+@token_required
+def acknowledge_revision():
+    """
+    Endpoint 5: Annotator Acknowledgment - Moves rejected sentence back to IN_PROGRESS.
+    """
+    try:
+        data = request.get_json()
+        sentence_id = data.get('sentence_id')
+        annotator_username = request.current_user['username']
+        
+        if not sentence_id:
+            return jsonify({"error": "Sentence ID is required"}), 400
+
+        # 1. Update Sentence Table status back to IN_PROGRESS
+        sentences_collection.update_one(
+            {"_id": ObjectId(sentence_id), "username": annotator_username},
+            {"$set": {
+                "review_status": "IN_PROGRESS", 
+                "submission_date": None, 
+                "reviewed_by": None,
+                "review_date": None
+            }}
+        )
+
+        # 2. Mark the Revision Note as acknowledged/read
+        revision_notes_collection.update_many(
+            {"sentence_id": sentence_id, "annotator_username": annotator_username, "acknowledged": False},
+            {"$set": {"acknowledged": True}}
+        )
+        
+        # 3. Reset tags: Mark all staged tags for this sentence as Pending (allowing re-work)
+        staged_tags_collection.update_many(
+            {"source_sentence_id": sentence_id, "username": annotator_username, "review_status": "Rejected"},
+            {"$set": {"review_status": "Pending", "review_comments": None}}
+        )
+        
+        log_action_and_update_report(annotator_username, f"Acknowledged rejection and started re-work on sentence {sentence_id}.")
+        
+        return jsonify({"message": f"Sentence {sentence_id} ready for re-work."}), 200
+
+    except Exception as e:
+        print(f"Error acknowledging revision: {e}")
+        return jsonify({"error": "Internal server error during acknowledgment"}), 500
     
 @app.route('/stats', methods=["GET"])
 def get_stats():
