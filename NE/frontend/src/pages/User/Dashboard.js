@@ -27,9 +27,9 @@ export default function Dashboard() {
     const [selectedSentence, setSelectedSentence] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [autoTags, setAutoTags] = useState([]);
-    const [newSelection, setNewSelection] = useState({ isActive: false, text: '', tag: '' });
+    const [newSelection, setNewSelection] = useState({ isActive: false, text: '', mainTag: '', subtype: '' });
     const [editingSentence, setEditingSentence] = useState({ isActive: false, _id: null, textContent: '' });
-    const [editingTag, setEditingTag] = useState({ isActive: false, _id: null, text: '', tag: '' });
+    const [editingTag, setEditingTag] = useState({ isActive: false, _id: null, text: '', mainTag: '', subtype: '' });
     const [deleteConfirmation, setDeleteConfirmation] = useState({ isOpen: false, sentenceId: null });
     const [bulkUploadDialog, setBulkUploadDialog] = useState(false);
     const [file, setFile] = useState(null);
@@ -48,13 +48,24 @@ export default function Dashboard() {
     // --- SEARCH & TAG MATCH STATES ---
     const [searchTerm, setSearchTerm] = useState('');
     const [matchedTag, setMatchedTag] = useState(null);
-    const PREDEFINED_TAGS = [
-        "Noun Compound",
-        "Reduplicated", 
-        "Echo",
-        "Opaque",
-        "Opaque-Idiom"
-    ];
+    
+    // NEW: Tag structure with main tags and subtypes
+    const TAG_STRUCTURE = {
+        "TIMEX": ["Time", "Date", "Day"],
+        "NUMEX": ["Currency", "Measurement", "Cardinal"],
+        "ENAMEX": ["Person", "Organisation", "Location", "Facilities", "Artifacts"],
+    };
+
+    // Helper function to get all possible tag combinations
+    const getAllTagOptions = () => {
+        const options = [];
+        Object.entries(TAG_STRUCTURE).forEach(([mainTag, subtypes]) => {
+            subtypes.forEach(subtype => {
+                options.push(`${mainTag}_${subtype}`);
+            });
+        });
+        return options;
+    };
 
     // --- PROJECT STATES ---
     const [selectedProject, setSelectedProject] = useState(null); 
@@ -417,8 +428,8 @@ export default function Dashboard() {
     const handleSelectProject = (project) => {
     setSelectedProject(project);
     setSelectedSentence(null);
-    setNewSelection({ isActive: false, text: '', tag: '' });
-    setEditingTag({ isActive: false, _id: null, text: '', tag: '' });
+    setNewSelection({ isActive: false, text: '', mainTag: '', subtype: '' });
+    setEditingTag({ isActive: false, _id: null, text: '', mainTag: '', subtype: '' });
     setSearchTerm(''); // Clear search on project switch
     setMatchedTag(null); // Clear tag match on project switch
     isInitialLoad.current = true;
@@ -447,21 +458,18 @@ export default function Dashboard() {
     const handleSelectionEvent = (sentence) => {
     const highlightedText = window.getSelection().toString().trim();
     setSelectedSentence(sentence);
-    setEditingTag({ isActive: false, _id: null, text: '', tag: '' });
+    setEditingTag({ isActive: false, _id: null, text: '', mainTag: '', subtype: '' });
 
     // Log sentence selection
     logUserAction(`Selected sentence for annotation`);
 
     if (highlightedText.length > 0 && !editingSentence.isActive) {
-        let suggestion = "Noun Compound";
-        const lowerCaseText = highlightedText.toLowerCase();
-        const existingTag = tags.find(t => t.text.toLowerCase() === lowerCaseText);
-
-        if (existingTag) {
-            suggestion = existingTag.tag;
-        }
-        
-        setNewSelection({ isActive: true, text: highlightedText, tag: suggestion });
+        setNewSelection({ 
+            isActive: true, 
+            text: highlightedText, 
+            mainTag: 'ENAMEX', 
+            subtype: 'Person' 
+        });
         
         // Immediately check for auto-detected tags from current sentence
         const autoDetectedTags = findAutoDetectedTags(sentence, highlightedText);
@@ -473,7 +481,7 @@ export default function Dashboard() {
         // Then fetch API recommendations
         fetchTagRecommendations(highlightedText);
     } else {
-        setNewSelection({ isActive: false, text: '', tag: '' });
+        setNewSelection({ isActive: false, text: '', mainTag: '', subtype: '' });
         setTagRecommendations([]);
         setShowRecommendations(false);
     }
@@ -506,9 +514,14 @@ export default function Dashboard() {
     };
 
     const handleSelectRecommendation = (recommendation) => {
+    // Parse the recommended tag (assuming it comes in "maintag_subtype" format)
+    const [mainTag, ...subtypeParts] = recommendation.recommended_tag.split('_');
+    const subtype = subtypeParts.join('_');
+    
     setNewSelection(prev => ({
         ...prev,
-        tag: recommendation.recommended_tag
+        mainTag: mainTag || 'ENAMEX',
+        subtype: subtype || 'Person'
     }));
     setShowRecommendations(false);
     
@@ -518,9 +531,11 @@ export default function Dashboard() {
 
 
    const handleSaveNewTag = async () => {
-    if (!selectedSentence || !newSelection.text.trim() || !newSelection.tag.trim()) {
-        return alert("Please provide both text and a tag label.");
+    if (!selectedSentence || !newSelection.text.trim() || !newSelection.mainTag || !newSelection.subtype) {
+        return alert("Please provide text, main tag, and subtype.");
     }
+    
+    const fullTag = `${newSelection.mainTag}_${newSelection.subtype}`;
     
     const response = await fetchWithAuth(`http://127.0.0.1:5001/tags`, {
         method: 'POST',
@@ -528,7 +543,7 @@ export default function Dashboard() {
         body: JSON.stringify({
             username,
             text: newSelection.text.trim(),
-            tag: newSelection.tag.trim(),
+            tag: fullTag,
             sentenceId: selectedSentence._id
         }),
     });
@@ -536,10 +551,10 @@ export default function Dashboard() {
     if (!response) return; // Authentication failed
     
     // Log the tag creation action
-    await logUserAction(`Added tag: "${newSelection.text.trim()}" as "${newSelection.tag.trim()}" for sentence`);
+    await logUserAction(`Added tag: "${newSelection.text.trim()}" as "${fullTag}" for sentence`);
     
     await fetchTags();
-    setNewSelection({ isActive: false, text: '', tag: '' });
+    setNewSelection({ isActive: false, text: '', mainTag: '', subtype: '' });
 };
     const handleRemoveTag = async (tagId) => {
     if (!selectedSentence) return;
@@ -568,8 +583,18 @@ export default function Dashboard() {
 
 
     const handleStartEditTag = (tag) => {
-        setEditingTag({ isActive: true, _id: tag._id, text: tag.text, tag: tag.tag });
-        setNewSelection({ isActive: false, text: '', tag: '' });
+        // Parse the existing tag into mainTag and subtype
+        const [mainTag, ...subtypeParts] = tag.tag.split('_');
+        const subtype = subtypeParts.join('_');
+        
+        setEditingTag({ 
+            isActive: true, 
+            _id: tag._id, 
+            text: tag.text, 
+            mainTag: mainTag,
+            subtype: subtype
+        });
+        setNewSelection({ isActive: false, text: '', mainTag: '', subtype: '' });
     };
 
     
@@ -578,11 +603,13 @@ export default function Dashboard() {
 const handleUpdateTag = async () => {
     if (!editingTag._id) return;
 
+    const fullTag = `${editingTag.mainTag}_${editingTag.subtype}`;
+
     // Local update for snappier UI
     setTags(prevTags =>
         prevTags.map(tag =>
             tag._id === editingTag._id
-                ? { ...tag, text: editingTag.text, tag: editingTag.tag }
+                ? { ...tag, text: editingTag.text, tag: fullTag }
                 : tag
         )
     );
@@ -594,7 +621,7 @@ const handleUpdateTag = async () => {
             body: JSON.stringify({
                 username,
                 text: editingTag.text.trim(),
-                tag: editingTag.tag.trim(),
+                tag: fullTag.trim(),
                 sentenceId: selectedSentence._id 
             })
         });
@@ -602,13 +629,13 @@ const handleUpdateTag = async () => {
         if (!response) return; // Authentication failed
         
         // Log the tag update action
-        await logUserAction(`Updated tag to: "${editingTag.text.trim()}" as "${editingTag.tag.trim()}"`);
+        await logUserAction(`Updated tag to: "${editingTag.text.trim()}" as "${fullTag}"`);
         
     } catch (err) {
         console.error("Error updating tag:", err);
     }
 
-    setEditingTag({ isActive: false, _id: null, text: '', tag: '' });
+    setEditingTag({ isActive: false, _id: null, text: '', mainTag: '', subtype: '' });
 };
 
 
@@ -704,14 +731,14 @@ const handleUpdateTag = async () => {
             }}
         >
             <Typography variant="h6" fontWeight={500}>
-                MWE Annotator - {userData?.full_name || username || "User"}
+                NER Annotator - {userData?.full_name || username || "User"}
             </Typography>
             
             <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
                 {/* User Guidelines Button */}
                 <Button 
                     variant="text" 
-                    onClick={() => window.open('/MWE Tool - User Guidelines.pdf', '_blank')}
+                    onClick={() => window.open('/NER Tool - User Guidelines.pdf', '_blank')}
                     sx={{ color: 'white' }}
                 >
                     SHOW USER GUIDELINES
@@ -720,7 +747,7 @@ const handleUpdateTag = async () => {
                 {/* Annotation Guidelines Button */}
                 <Button 
                     variant="text"
-                    onClick={() => window.open('/MWE_Guidelines.pdf', '_blank')}
+                    onClick={() => window.open('/ER_Guidelines.pdf', '_blank')}
                     sx={{ color: 'white' }}
                 >
                     SHOW ANNOTATION GUIDELINES
@@ -921,24 +948,46 @@ const handleUpdateTag = async () => {
                                 onChange={(e) => setEditingTag(prev => ({ ...prev, text: e.target.value }))} 
                                 />
                                 
+                                {/* Main Tag Selection for Editing */}
                                 <FormControl fullWidth sx={{ mb: 2 }}>
-                                <InputLabel>Tag Label</InputLabel>
-                                <Select
-                                    value={editingTag.tag}
-                                    label="Tag Label"
-                                    onChange={(e) => setEditingTag(prev => ({ ...prev, tag: e.target.value }))}
-                                >
-                                    {PREDEFINED_TAGS.map((tag) => (
-                                    <MenuItem key={tag} value={tag}>
-                                        {tag}
-                                    </MenuItem>
-                                    ))}
-                                </Select>
+                                    <InputLabel>Main Tag</InputLabel>
+                                    <Select
+                                        value={editingTag.mainTag}
+                                        label="Main Tag"
+                                        onChange={(e) => setEditingTag(prev => ({ 
+                                            ...prev, 
+                                            mainTag: e.target.value,
+                                            subtype: '' // Reset subtype when main tag changes
+                                        }))}
+                                    >
+                                        {Object.keys(TAG_STRUCTURE).map((mainTag) => (
+                                            <MenuItem key={mainTag} value={mainTag}>
+                                                {mainTag}
+                                            </MenuItem>
+                                        ))}
+                                    </Select>
+                                </FormControl>
+                                
+                                {/* Subtype Selection for Editing */}
+                                <FormControl fullWidth sx={{ mb: 2 }}>
+                                    <InputLabel>Subtype</InputLabel>
+                                    <Select
+                                        value={editingTag.subtype}
+                                        label="Subtype"
+                                        onChange={(e) => setEditingTag(prev => ({ ...prev, subtype: e.target.value }))}
+                                        disabled={!editingTag.mainTag}
+                                    >
+                                        {editingTag.mainTag && TAG_STRUCTURE[editingTag.mainTag].map((subtype) => (
+                                            <MenuItem key={subtype} value={subtype}>
+                                                {subtype}
+                                            </MenuItem>
+                                        ))}
+                                    </Select>
                                 </FormControl>
                                 
                                 <Box sx={{ display: 'flex', gap: 1 }}>
                                 <Button onClick={handleUpdateTag} variant="contained">Save Changes</Button>
-                                <Button onClick={() => setEditingTag({ isActive: false, _id: null, text: '', tag: '' })} variant="outlined">Cancel</Button>
+                                <Button onClick={() => setEditingTag({ isActive: false, _id: null, text: '', mainTag: '', subtype: '' })} variant="outlined">Cancel</Button>
                                 </Box>
                             </Box>
                             ) : newSelection.isActive ? (
@@ -968,7 +1017,11 @@ const handleUpdateTag = async () => {
                                                         label={`${rec.recommended_tag} (${Math.round(rec.confidence * 100)}%)`}
                                                         onClick={() => handleSelectRecommendation(rec)}
                                                         color={rec.is_auto_detected ? "secondary" : "primary"}
-                                                        variant={newSelection.tag === rec.recommended_tag ? "filled" : "outlined"}
+                                                        variant={
+                                                            `${newSelection.mainTag}_${newSelection.subtype}` === rec.recommended_tag 
+                                                                ? "filled" 
+                                                                : "outlined"
+                                                        }
                                                         sx={{ cursor: 'pointer' }}
                                                         title={
                                                             rec.is_auto_detected 
@@ -996,16 +1049,38 @@ const handleUpdateTag = async () => {
                                         </Box>
                                     )}
                                     
+                                    {/* Main Tag Selection */}
                                     <FormControl fullWidth sx={{ mb: 2 }}>
-                                        <InputLabel>Tag Label</InputLabel>
+                                        <InputLabel>Main Tag</InputLabel>
                                         <Select
-                                            value={newSelection.tag}
-                                            label="Tag Label"
-                                            onChange={(e) => setNewSelection(s => ({ ...s, tag: e.target.value }))}
+                                            value={newSelection.mainTag}
+                                            label="Main Tag"
+                                            onChange={(e) => setNewSelection(s => ({ 
+                                                ...s, 
+                                                mainTag: e.target.value,
+                                                subtype: '' // Reset subtype when main tag changes
+                                            }))}
                                         >
-                                            {PREDEFINED_TAGS.map((tag) => (
-                                                <MenuItem key={tag} value={tag}>
-                                                    {tag}
+                                            {Object.keys(TAG_STRUCTURE).map((mainTag) => (
+                                                <MenuItem key={mainTag} value={mainTag}>
+                                                    {mainTag}
+                                                </MenuItem>
+                                            ))}
+                                        </Select>
+                                    </FormControl>
+                                    
+                                    {/* Subtype Selection */}
+                                    <FormControl fullWidth sx={{ mb: 2 }}>
+                                        <InputLabel>Subtype</InputLabel>
+                                        <Select
+                                            value={newSelection.subtype}
+                                            label="Subtype"
+                                            onChange={(e) => setNewSelection(s => ({ ...s, subtype: e.target.value }))}
+                                            disabled={!newSelection.mainTag}
+                                        >
+                                            {newSelection.mainTag && TAG_STRUCTURE[newSelection.mainTag].map((subtype) => (
+                                                <MenuItem key={subtype} value={subtype}>
+                                                    {subtype}
                                                 </MenuItem>
                                             ))}
                                         </Select>
@@ -1014,7 +1089,7 @@ const handleUpdateTag = async () => {
                                     <Box sx={{ display: 'flex', gap: 1 }}>
                                         <Button onClick={handleSaveNewTag} variant="contained">Save Tag</Button>
                                         <Button onClick={() => {
-                                            setNewSelection({ isActive: false, text: '', tag: '' });
+                                            setNewSelection({ isActive: false, text: '', mainTag: '', subtype: '' });
                                             setShowRecommendations(false);
                                             setTagRecommendations([]);
                                         }} variant="outlined">Cancel</Button>
@@ -1075,6 +1150,13 @@ const handleUpdateTag = async () => {
                                             color="success" 
                                             onClick={() => handleStatusChange(true)} 
                                             disabled={selectedSentence.is_annotated}
+                                            sx={{
+                                                '&.Mui-disabled': {
+                                                    color: 'white',
+                                                    backgroundColor: theme.palette.success.main,
+                                                    opacity: 0.7
+                                                }
+                                            }}
                                         >
                                             Mark as Annotated
                                         </Button>

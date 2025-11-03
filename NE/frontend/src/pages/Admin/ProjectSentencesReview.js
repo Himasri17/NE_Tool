@@ -194,7 +194,7 @@ export default function ProjectSentencesReview() {
                                     <Chip 
                                         label={`${tag.text} (${tag.tag})`} 
                                         size="small"
-                                        color={tag.mweId ? "secondary" : "primary"}
+                                        color={tag.ERId ? "secondary" : "primary"}
                                         variant="filled"
                                         sx={{ fontWeight: 'bold' }}
                                     />

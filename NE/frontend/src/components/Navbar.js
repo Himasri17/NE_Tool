@@ -107,7 +107,7 @@ export default function Navbar({
                     </Badge>
                 </IconButton>
                 <Typography variant="h6" fontWeight={500}>
-                    Multiword Expression Workbench
+                    Named Entity  Workbench
                 </Typography>
             </Box>
             

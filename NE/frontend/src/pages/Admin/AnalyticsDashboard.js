@@ -116,7 +116,7 @@ const AnalyticsDashboard = () => {
             console.log("🔄 Fetching enhanced analytics data...");
             
             const endpoints = [
-                fetch(`${API_BASE_URL}/api/analytics/mwe-distribution`, {
+                fetch(`${API_BASE_URL}/api/analytics/NER-distribution`, {
                     headers: getAuthHeaders()
                 }),
                 fetch(`${API_BASE_URL}/api/analytics/comprehensive-report?level=standard`, {
@@ -147,11 +147,11 @@ const AnalyticsDashboard = () => {
                 }
             });
 
-            // Process MWE data
+            // Process NER data
             if (responses[0].status === 'fulfilled' && responses[0].value.ok) {
-                const mweData = await responses[0].value.json();
-                console.log("MWE Data:", mweData);
-                setAnalyticsData(mweData);
+                const ERData = await responses[0].value.json();
+                console.log("NER Data:", ERData);
+                setAnalyticsData(ERData);
             }
 
             // Process comprehensive data
@@ -189,11 +189,11 @@ const AnalyticsDashboard = () => {
             });
         }
 
-        if (insights.most_common_mwe) {
+        if (insights.most_common_ER) {
             newNotifications.push({
                 id: 2,
                 type: 'info',
-                message: `Most common MWE: ${insights.most_common_mwe.mwe_type} (${insights.most_common_mwe.count} occurrences)`,
+                message: `Most common NER: ${insights.most_common_ER.ER_type} (${insights.most_common_ER.count} occurrences)`,
                 icon: <TrendingUpIcon />
             });
         }
@@ -251,8 +251,8 @@ const AnalyticsDashboard = () => {
                 if (value) queryParams.append(key, value);
             });
 
-            const [mweRes, comprehensiveRes] = await Promise.all([
-                fetch(`${API_BASE_URL}/api/analytics/mwe-distribution?${queryParams}`, {
+            const [ERRes, comprehensiveRes] = await Promise.all([
+                fetch(`${API_BASE_URL}/api/analytics/NER-distribution?${queryParams}`, {
                     headers: getAuthHeaders()
                 }),
                 fetch(`${API_BASE_URL}/api/analytics/comprehensive-report?${queryParams}&level=standard`, {
@@ -260,8 +260,8 @@ const AnalyticsDashboard = () => {
                 })
             ]);
 
-            if (mweRes.ok) {
-                const data = await mweRes.json();
+            if (ERRes.ok) {
+                const data = await ERRes.json();
                 setAnalyticsData(data);
             }
 
@@ -422,9 +422,9 @@ const AnalyticsDashboard = () => {
                             analyticsData?.summary?.total_projects || 
                             (comprehensiveData?.project_progress ? comprehensiveData.project_progress.length : 0) || 0;
         
-        const totalMweTypes = summary.total_mwe_types || 
-                            analyticsData?.summary?.total_mwe_types || 
-                            (analyticsData?.mwe_types ? analyticsData.mwe_types.length : 0) || 0;
+        const totalERTypes = summary.total_ER_types || 
+                            analyticsData?.summary?.total_ER_types || 
+                            (analyticsData?.ER_types ? analyticsData.ER_types.length : 0) || 0;
 
         const avgAnnotationsPerUser = summary.avg_annotations_per_user || 
                                     analyticsData?.summary?.avg_annotations_per_user || 
@@ -475,8 +475,8 @@ const AnalyticsDashboard = () => {
                             </Grid>
                             <Grid item xs={12} sm={6} md={3}>
                                 <EnhancedStatCard
-                                    title="MWE Types"
-                                    value={totalMweTypes}
+                                    title="NER Types"
+                                    value={totalERTypes}
                                     change={5.3}
                                     icon={<LanguageIcon />}
                                     color={COLOR_PALETTE.secondary}
@@ -622,7 +622,7 @@ const AnalyticsDashboard = () => {
                                                     secondary={`${user.total_annotations || user.count || 0} annotations`}
                                                 />
                                                 <Chip 
-                                                    label={`${user.unique_mwe_count || user.mwe_type_count || 0} types`}
+                                                    label={`${user.unique_ER_count || user.ER_type_count || 0} types`}
                                                     size="small"
                                                     variant="outlined"
                                                 />
@@ -698,11 +698,11 @@ const AnalyticsDashboard = () => {
 
         if (format === 'pdf') {
             // Get comprehensive data for all charts
-            const [comprehensiveRes, mweRes, timelineRes] = await Promise.all([
+            const [comprehensiveRes, ERRes, timelineRes] = await Promise.all([
                 fetch(`${API_BASE_URL}/api/analytics/comprehensive-report?${queryParams}&level=detailed`, {
                     headers: getAuthHeaders()
                 }),
-                fetch(`${API_BASE_URL}/api/analytics/mwe-distribution?${queryParams}`, {
+                fetch(`${API_BASE_URL}/api/analytics/NER-distribution?${queryParams}`, {
                     headers: getAuthHeaders()
                 }),
                 fetch(`${API_BASE_URL}/api/analytics/annotation-timeline?${queryParams}`, {
@@ -710,15 +710,15 @@ const AnalyticsDashboard = () => {
                 })
             ]);
 
-            if (comprehensiveRes.ok && mweRes.ok) {
+            if (comprehensiveRes.ok && ERRes.ok) {
                 const comprehensiveData = await comprehensiveRes.json();
-                const mweData = await mweRes.json();
+                const ERData = await ERRes.json();
                 const timelineData = timelineRes.ok ? await timelineRes.json() : [];
                 
-                console.log("All data for PDF:", { comprehensiveData, mweData, timelineData });
-                await generateEnhancedPdfReport(comprehensiveData, mweData, timelineData, projects);
+                console.log("All data for PDF:", { comprehensiveData, ERData, timelineData });
+                await generateEnhancedPdfReport(comprehensiveData, ERData, timelineData, projects);
             } else {
-                if (comprehensiveRes.status === 401 || mweRes.status === 401) {
+                if (comprehensiveRes.status === 401 || ERRes.status === 401) {
                     handleUnauthorized();
                     return;
                 }
@@ -756,7 +756,7 @@ const AnalyticsDashboard = () => {
     }
 };
 
-const generateEnhancedPdfReport = async (comprehensiveData, mweData, timelineData, projects) => {
+const generateEnhancedPdfReport = async (comprehensiveData, ERData, timelineData, projects) => {
     console.log("Generating Enhanced PDF with all charts...");
     
     const doc = new jsPDF();
@@ -905,10 +905,10 @@ const generateEnhancedPdfReport = async (comprehensiveData, mweData, timelineDat
     
     // Key Metrics
     const metrics = [
-        { label: 'Total Annotations', value: summary.total_annotations || mweData?.summary?.total_annotations || 0 },
-        { label: 'Active Users', value: summary.total_users || mweData?.summary?.total_users || 0 },
+        { label: 'Total Annotations', value: summary.total_annotations || ERData?.summary?.total_annotations || 0 },
+        { label: 'Active Users', value: summary.total_users || ERData?.summary?.total_users || 0 },
         { label: 'Total Projects', value: projects?.length || 0 },
-        { label: 'MWE Types', value: summary.total_mwe_types || mweData?.summary?.total_mwe_types || 0 }
+        { label: 'NER Types', value: summary.total_ER_types || ERData?.summary?.total_ER_types || 0 }
     ];
     
     metrics.forEach(metric => {
@@ -921,19 +921,19 @@ const generateEnhancedPdfReport = async (comprehensiveData, mweData, timelineDat
     y = 15;
     addSectionHeader('OVERVIEW CHARTS');
 
-    // 1. MWE Distribution Pie Chart
-    const mweChartData = mweData?.mwe_types?.slice(0, 8) || [];
-    const mwePieChart = await generateChart(
-        mweChartData,
+    // 1. NER Distribution Pie Chart
+    const ERChartData = ERData?.ER_types?.slice(0, 8) || [];
+    const ERPieChart = await generateChart(
+        ERChartData,
         'pie',
-        'MWE Type Distribution',
-        'MWE Types',
+        'NER Type Distribution',
+        'NER Types',
         'Count'
     );
-    await addChartImage(mwePieChart, 'MWE Type Distribution', 'Distribution of Multi-Word Expression types across all annotations');
+    await addChartImage(ERPieChart, 'NER Type Distribution', 'Distribution of Multi-Word Expression types across all annotations');
 
     // 2. User Performance Bar Chart
-    const userPerformanceData = comprehensiveData?.user_performance?.slice(0, 10) || mweData?.user_distribution?.slice(0, 10) || [];
+    const userPerformanceData = comprehensiveData?.user_performance?.slice(0, 10) || ERData?.user_distribution?.slice(0, 10) || [];
     const userBarChart = await generateChart(
         userPerformanceData,
         'bar',
@@ -997,7 +997,7 @@ const generateEnhancedPdfReport = async (comprehensiveData, mweData, timelineDat
     addSectionHeader('PERFORMANCE ANALYTICS');
 
     // 5. Language Distribution
-    const languageData = mweData?.language_distribution?.slice(0, 10) || [];
+    const languageData = ERData?.language_distribution?.slice(0, 10) || [];
     const languageChart = await generateChart(
         languageData,
         'bar',
@@ -1033,9 +1033,9 @@ const generateEnhancedPdfReport = async (comprehensiveData, mweData, timelineDat
         y += lineHeight;
     }
 
-    if (insights.most_common_mwe) {
-        addSubSection('📊 Most Common MWE');
-        addText(`${insights.most_common_mwe.mwe_type}: ${insights.most_common_mwe.count} occurrences`, 10, 'bold', margin);
+    if (insights.most_common_ER) {
+        addSubSection('📊 Most Common NER');
+        addText(`${insights.most_common_ER.ER_type}: ${insights.most_common_ER.count} occurrences`, 10, 'bold', margin);
         y += lineHeight;
     }
 
@@ -1080,7 +1080,7 @@ const generateEnhancedPdfReport = async (comprehensiveData, mweData, timelineDat
   const chartData = userData.slice(0, 10).map(user => ({
     username: user.username || user._id || 'Unknown User',
     total_annotations: user.total_annotations || user.count || 0,
-    unique_mwe_count: user.unique_mwe_count || user.mwe_type_count || 0,
+    unique_ER_count: user.unique_ER_count || user.ER_type_count || 0,
     productivity_score: user.productivity_score || 0,
     completion_rate: user.approval_rate || 0
   }));
@@ -1089,7 +1089,7 @@ const generateEnhancedPdfReport = async (comprehensiveData, mweData, timelineDat
   const radarData = userData.slice(0, 5).map(user => ({
     subject: (user.username || user._id || 'User').substring(0, 12), // Truncate long names
     annotations: user.total_annotations || user.count || 0,
-    diversity: user.unique_mwe_count || user.mwe_type_count || 0,
+    diversity: user.unique_ER_count || user.ER_type_count || 0,
     productivity: user.productivity_score || 0,
     quality: user.approval_rate || 0
   }));
@@ -1278,7 +1278,7 @@ const generateEnhancedPdfReport = async (comprehensiveData, mweData, timelineDat
                     formatter={(value, name) => {
                       const metricNames = {
                         annotations: 'Annotations',
-                        diversity: 'MWE Diversity',
+                        diversity: 'NER Diversity',
                         productivity: 'Productivity',
                         quality: 'Quality Score'
                       };
@@ -1430,10 +1430,10 @@ const generateEnhancedPdfReport = async (comprehensiveData, mweData, timelineDat
                   
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                     <Typography variant="body2" color="text.secondary">
-                      MWE Types:
+                      NER Types:
                     </Typography>
                     <Typography variant="body1" fontWeight="600">
-                      {user.unique_mwe_count}
+                      {user.unique_ER_count}
                     </Typography>
                   </Box>
                   
@@ -1664,12 +1664,12 @@ const renderProjectAnalytics = () => {
     );
 };
 
- const renderMWEAnalytics = () => {
+ const renderERAnalytics = () => {
   // CORRECTED: Use the right data structure from backend
-  const mweData = analyticsData?.mwe_types || [];
+  const ERData = analyticsData?.ER_types || [];
   const languageData = analyticsData?.language_distribution || [];
   
-  console.log("MWE Data for charts:", mweData);
+  console.log("NER Data for charts:", ERData);
   console.log("Language Data for charts:", languageData);
 
   return (
@@ -1681,7 +1681,7 @@ const renderProjectAnalytics = () => {
         width: "100%",
       }}
     >
-      {/* Left – MWE Type Distribution */}
+      {/* Left – NER Type Distribution */}
       <Box
         sx={{
           flex: { xs: "1 1 100%", md: "1 1 48%" },
@@ -1700,26 +1700,26 @@ const renderProjectAnalytics = () => {
           }}
         >
           <Typography variant="h6" fontWeight="700" gutterBottom>
-            MWE Type Distribution
+            NER Type Distribution
           </Typography>
           <Box sx={{ width: "100%", height: 400 }}>
-            {mweData.length > 0 ? (
+            {ERData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={mweData.slice(0, 8)} // Show top 8 MWE types
+                    data={ERData.slice(0, 8)} // Show top 8 NER types
                     dataKey="count"
-                    nameKey="mwe_type"
+                    nameKey="ER_type"
                     cx="50%"
                     cy="50%"
                     innerRadius={60}
                     outerRadius={120}
-                    label={({ mwe_type, percent }) =>
-                      `${mwe_type} ${(percent * 100).toFixed(1)}%`
+                    label={({ ER_type, percent }) =>
+                      `${ER_type} ${(percent * 100).toFixed(1)}%`
                     }
                     labelLine={true}
                   >
-                    {mweData.map((_, i) => (
+                    {ERData.map((_, i) => (
                       <Cell
                         key={i}
                         fill={[
@@ -1751,7 +1751,7 @@ const renderProjectAnalytics = () => {
               }}>
                 <AssessmentIcon sx={{ fontSize: 48, mb: 2, opacity: 0.5 }} />
                 <Typography variant="body1">
-                  No MWE data available
+                  No NER data available
                 </Typography>
               </Box>
             )}
@@ -1831,7 +1831,7 @@ const renderProjectAnalytics = () => {
         </Paper>
       </Box>
 
-      {/* Additional MWE Statistics */}
+      {/* Additional NER Statistics */}
       <Box
         sx={{
           flex: "1 1 100%",
@@ -1845,11 +1845,11 @@ const renderProjectAnalytics = () => {
           }}
         >
           <Typography variant="h6" fontWeight="700" gutterBottom>
-            MWE Statistics Summary
+            NER Statistics Summary
           </Typography>
           <Grid container spacing={2}>
-            {mweData.slice(0, 6).map((mwe, index) => (
-              <Grid item xs={12} sm={6} md={4} key={mwe.mwe_type}>
+            {ERData.slice(0, 6).map((NER, index) => (
+              <Grid item xs={12} sm={6} md={4} key={NER.ER_type}>
                 <Card 
                   sx={{ 
                     p: 2, 
@@ -1864,26 +1864,26 @@ const renderProjectAnalytics = () => {
                   }}
                 >
                   <Typography variant="subtitle2" fontWeight="600" gutterBottom>
-                    {mwe.mwe_type}
+                    {NER.ER_type}
                   </Typography>
                   <Typography variant="h6" fontWeight="700">
-                    {mwe.count} annotations
+                    {NER.count} annotations
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    {mwe.unique_word_count || 0} unique phrases
+                    {NER.unique_word_count || 0} unique phrases
                   </Typography>
                 </Card>
               </Grid>
             ))}
           </Grid>
-          {mweData.length === 0 && (
+          {ERData.length === 0 && (
             <Box sx={{ 
               textAlign: 'center', 
               py: 4,
               color: 'text.secondary'
             }}>
               <Typography variant="body1">
-                No MWE statistics available
+                No NER statistics available
               </Typography>
             </Box>
           )}
@@ -2268,7 +2268,7 @@ const renderProjectAnalytics = () => {
                                 <Tab 
                                     icon={<LanguageIcon sx={{ fontSize: 20 }} />} 
                                     iconPosition="start" 
-                                    label="MWE Analytics" 
+                                    label="NER Analytics" 
                                 />
                             </Tabs>
                         </Paper>
@@ -2285,7 +2285,7 @@ const renderProjectAnalytics = () => {
                                 {activeTab === 0 && renderOverview()}
                                 {activeTab === 1 && renderPerformanceAnalytics()}
                                 {activeTab === 2 && renderProjectAnalytics()}
-                                {activeTab === 3 && renderMWEAnalytics()}
+                                {activeTab === 3 && renderERAnalytics()}
                             </motion.div>
                         </AnimatePresence>
                     </motion.div>

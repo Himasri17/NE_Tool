@@ -743,7 +743,7 @@ export default function AdminDashboard() {
                         gap: 2
                     }}>
                         
-                        {/* Search Bar & MWE Type */}
+                        {/* Search Bar & NER Type */}
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
                             <TextField 
                                 variant="outlined" 
@@ -880,7 +880,7 @@ export default function AdminDashboard() {
                     </Button>
                 </Container>
                 <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 2 }}>
-                    © {new Date().getFullYear()} MWE Annotation Platform. All rights reserved.
+                    © {new Date().getFullYear()} NER Annotation Platform. All rights reserved.
                 </Typography>
             </Box>
 

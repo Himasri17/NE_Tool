@@ -4,14 +4,14 @@ import {
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import IconButton from '@mui/material/IconButton';
-import GavelIcon from '@mui/icons-material/Gavel';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import GroupIcon from '@mui/icons-material/Group';
 import SecurityIcon from '@mui/icons-material/Security';
 import WarningIcon from '@mui/icons-material/Warning';
+import RateReviewIcon from '@mui/icons-material/RateReview';
 
 export default function TermsDialog({ open, onClose }) {
-    const organizationName = 'MWA.IIITH';
+    const organizationName = 'NE.IIITH';
 
     return (
         <Dialog 
@@ -50,97 +50,109 @@ export default function TermsDialog({ open, onClose }) {
                         1. Agreement to Terms
                     </Typography>
                     <Typography variant="body1" sx={{ mb: 2 }}>
-                        Welcome to the MWE (Multiword Expressions) Annotation Tool provided by <strong>{organizationName}</strong>. 
+                        Welcome to the NE (Named Entity) Annotation Tool provided by <strong>{organizationName}</strong>. 
                         By accessing and using this platform, you agree to be bound by these Terms and Conditions, 
-                        along with our MWE Annotation Guidelines and User Guidelines.
+                        along with our NE Annotation Guidelines and User Guidelines.
                     </Typography>
                 </Box>
                 
                 <Divider sx={{ my: 3 }} />
 
-                {/* Annotation Guidelines */}
+                {/* User Registration & Roles */}
                 <Box sx={{ mb: 3 }}>
                     <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: 'primary.main' }}>
-                        2. Annotation Guidelines & Scope
+                        2. User Registration & Roles
                     </Typography>
-                    <Typography variant="body2" sx={{ mb: 2 }}>
-                        This tool is specifically designed for annotating Multiword Expressions (MWEs) in Indian languages. 
-                        All users must strictly follow the official MWE Annotation Guidelines (Version 1.1).
+                    
+                    <List dense sx={{ mb: 2 }}>
+                        <ListItem sx={{ px: 0, alignItems: 'flex-start' }}>
+                            <ListItemIcon sx={{ minWidth: 36, mt: 0.5 }}><GroupIcon fontSize="small" color="primary" /></ListItemIcon>
+                            <ListItemText 
+                                primary={
+                                    <Typography variant="body2">
+                                        <strong>For Admins:</strong> While registering select role as Admin and fill all other necessary credentials.
+                                        Responsible for project management, user assignments, and overall system administration.
+                                    </Typography>
+                                }
+                            />
+                        </ListItem>
+                        <ListItem sx={{ px: 0, alignItems: 'flex-start' }}>
+                            <ListItemIcon sx={{ minWidth: 36, mt: 0.5 }}><GroupIcon fontSize="small" color="primary" /></ListItemIcon>
+                            <ListItemText 
+                                primary={
+                                    <Typography variant="body2">
+                                        <strong>For Annotators:</strong> While registering select role as Annotator and make sure you select 
+                                        organisation and language as required by your admin. Responsible for creating initial annotations.
+                                    </Typography>
+                                }
+                            />
+                        </ListItem>
+                        <ListItem sx={{ px: 0, alignItems: 'flex-start' }}>
+                            <ListItemIcon sx={{ minWidth: 36, mt: 0.5 }}><RateReviewIcon fontSize="small" color="secondary" /></ListItemIcon>
+                            <ListItemText 
+                                primary={
+                                    <Typography variant="body2">
+                                        <strong>For Reviewers:</strong> While registering select role as Reviewer. Responsible for 
+                                        validating and reviewing annotations created by annotators, ensuring quality and consistency 
+                                        across the annotation projects.
+                                    </Typography>
+                                }
+                            />
+                        </ListItem>
+                    </List>
+                </Box>
+                
+                <Divider sx={{ my: 3 }} />
+
+                {/* Project Management */}
+                <Box sx={{ mb: 3 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: 'primary.main' }}>
+                        3. Project Management & File Upload
                     </Typography>
                     
                     <Typography variant="subtitle1" sx={{ fontWeight: 'bold', mb: 1, color: 'text.primary' }}>
-                        Supported MWE Types:
+                        For Administrators:
                     </Typography>
                     <List dense sx={{ mb: 2 }}>
                         <ListItem sx={{ px: 0 }}>
                             <ListItemIcon sx={{ minWidth: 36 }}><CheckCircleOutlineIcon fontSize="small" color="success" /></ListItemIcon>
                             <ListItemText 
-                                primary="Noun Compound, Reduplicated Expression, and Echo-word" 
+                                primary="Upload New Project: You can start by uploading your own project to begin the annotation process." 
                                 primaryTypographyProps={{ variant: 'body2' }}
                             />
                         </ListItem>
                         <ListItem sx={{ px: 0 }}>
                             <ListItemIcon sx={{ minWidth: 36 }}><CheckCircleOutlineIcon fontSize="small" color="success" /></ListItemIcon>
                             <ListItemText 
-                                primary="Opaque and Opaque-Idiom expressions" 
+                                primary="File type can be a raw txt file and please consider to use sentence delimiters (?, !, ! , ! ! )." 
                                 primaryTypographyProps={{ variant: 'body2' }}
                             />
                         </ListItem>
                         <ListItem sx={{ px: 0 }}>
-                            <ListItemIcon sx={{ minWidth: 36 }}><GavelIcon fontSize="small" color="error" /></ListItemIcon>
+                            <ListItemIcon sx={{ minWidth: 36 }}><CheckCircleOutlineIcon fontSize="small" color="success" /></ListItemIcon>
                             <ListItemText 
-                                primary={
-                                    <Typography variant="body2">
-                                        <strong>Exclusions:</strong> Complex predicates or compound verbs are generally 
-                                        <strong> not to be annotated</strong>, unless they function as opaque or idiomatic expressions.
-                                    </Typography>
-                                }
+                                primary="Select an Existing Project: You can also choose a project that has already been uploaded." 
+                                primaryTypographyProps={{ variant: 'body2' }}
+                            />
+                        </ListItem>
+                        <ListItem sx={{ px: 0 }}>
+                            <ListItemIcon sx={{ minWidth: 36 }}><CheckCircleOutlineIcon fontSize="small" color="success" /></ListItemIcon>
+                            <ListItemText 
+                                primary="Assign Reviewers: Administrators can assign reviewers to projects for quality control." 
+                                primaryTypographyProps={{ variant: 'body2' }}
                             />
                         </ListItem>
                     </List>
-                </Box>
-                
-                <Divider sx={{ my: 3 }} />
 
-                {/* User Roles */}
-                <Box sx={{ mb: 3 }}>
-                    <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: 'primary.main' }}>
-                        3. User Roles & Responsibilities
+                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold', mb: 1, color: 'text.primary' }}>
+                        For Annotators & Reviewers:
                     </Typography>
                     <List dense>
-                        <ListItem sx={{ px: 0, alignItems: 'flex-start' }}>
-                            <ListItemIcon sx={{ minWidth: 36, mt: 0.5 }}><GroupIcon fontSize="small" color="primary" /></ListItemIcon>
+                        <ListItem sx={{ px: 0 }}>
+                            <ListItemIcon sx={{ minWidth: 36 }}><CheckCircleOutlineIcon fontSize="small" color="success" /></ListItemIcon>
                             <ListItemText 
-                                primary={
-                                    <Typography variant="body2">
-                                        <strong>Annotators:</strong> Must register with the 'Annotator' role and provide accurate 
-                                        organization and language information. Required to select at least two consecutive words 
-                                        and apply the correct annotation type following the guidelines.
-                                    </Typography>
-                                }
-                            />
-                        </ListItem>
-                        <ListItem sx={{ px: 0, alignItems: 'flex-start' }}>
-                            <ListItemIcon sx={{ minWidth: 36, mt: 0.5 }}><GroupIcon fontSize="small" color="primary" /></ListItemIcon>
-                            <ListItemText 
-                                primary={
-                                    <Typography variant="body2">
-                                        <strong>Administrators:</strong> Responsible for project management, including uploading 
-                                        text files, assigning tasks to annotators, and monitoring progress. Must ensure proper 
-                                        project configuration and user assignments.
-                                    </Typography>
-                                }
-                            />
-                        </ListItem>
-                        <ListItem sx={{ px: 0, alignItems: 'flex-start' }}>
-                            <ListItemIcon sx={{ minWidth: 36, mt: 0.5 }}><GroupIcon fontSize="small" color="primary" /></ListItemIcon>
-                            <ListItemText 
-                                primary={
-                                    <Typography variant="body2">
-                                        <strong>Data Submission:</strong> All annotations must be explicitly saved using the 
-                                        submission functionality. Unsaved work may be lost upon navigation or session timeout.
-                                    </Typography>
-                                }
+                                primary="Select an Existing Project: You can choose a project that has already been uploaded by your admin." 
+                                primaryTypographyProps={{ variant: 'body2' }}
                             />
                         </ListItem>
                     </List>
@@ -148,51 +160,166 @@ export default function TermsDialog({ open, onClose }) {
                 
                 <Divider sx={{ my: 3 }} />
 
-                {/* Intellectual Property */}
+                {/* Annotation Process */}
                 <Box sx={{ mb: 3 }}>
                     <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: 'primary.main' }}>
-                        4. Intellectual Property & Data Usage
+                        4. Annotation Process Guidelines
+                    </Typography>
+                    
+                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold', mb: 1, color: 'text.primary' }}>
+                        Steps for Annotation:
+                    </Typography>
+                    <List dense sx={{ mb: 2 }}>
+                        <ListItem sx={{ px: 0 }}>
+                            <ListItemIcon sx={{ minWidth: 36 }}><CheckCircleOutlineIcon fontSize="small" color="success" /></ListItemIcon>
+                            <ListItemText 
+                                primary="Viewing and Selecting Sentences: Click on any sentence from the list to start working on it." 
+                                primaryTypographyProps={{ variant: 'body2' }}
+                            />
+                        </ListItem>
+                        <ListItem sx={{ px: 0 }}>
+                            <ListItemIcon sx={{ minWidth: 36 }}><CheckCircleOutlineIcon fontSize="small" color="success" /></ListItemIcon>
+                            <ListItemText 
+                                primary="Select Words: Click and select words from the segmented sentence." 
+                                primaryTypographyProps={{ variant: 'body2' }}
+                            />
+                        </ListItem>
+                        <ListItem sx={{ px: 0 }}>
+                            <ListItemIcon sx={{ minWidth: 36 }}><CheckCircleOutlineIcon fontSize="small" color="success" /></ListItemIcon>
+                            <ListItemText 
+                                primary="Click on Annotate: After selecting the words, click on the Annotate button to proceed." 
+                                primaryTypographyProps={{ variant: 'body2' }}
+                            />
+                        </ListItem>
+                        <ListItem sx={{ px: 0 }}>
+                            <ListItemIcon sx={{ minWidth: 36 }}><CheckCircleOutlineIcon fontSize="small" color="success" /></ListItemIcon>
+                            <ListItemText 
+                                primary="Choosing Annotation Type: Select the NE type and its subtype from the dropdown menu." 
+                                primaryTypographyProps={{ variant: 'body2' }}
+                            />
+                        </ListItem>
+                        <ListItem sx={{ px: 0 }}>
+                            <ListItemIcon sx={{ minWidth: 36 }}><CheckCircleOutlineIcon fontSize="small" color="success" /></ListItemIcon>
+                            <ListItemText 
+                                primary="Add Annotation: Click Add to apply the annotation." 
+                                primaryTypographyProps={{ variant: 'body2' }}
+                            />
+                        </ListItem>
+                    </List>
+
+                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold', mb: 1, color: 'text.primary' }}>
+                        For Reviewers:
+                    </Typography>
+                    <List dense>
+                        <ListItem sx={{ px: 0 }}>
+                            <ListItemIcon sx={{ minWidth: 36 }}><RateReviewIcon fontSize="small" color="secondary" /></ListItemIcon>
+                            <ListItemText 
+                                primary="Review annotations created by annotators and provide feedback or corrections." 
+                                primaryTypographyProps={{ variant: 'body2' }}
+                            />
+                        </ListItem>
+                        <ListItem sx={{ px: 0 }}>
+                            <ListItemIcon sx={{ minWidth: 36 }}><RateReviewIcon fontSize="small" color="secondary" /></ListItemIcon>
+                            <ListItemText 
+                                primary="Ensure consistency and quality across all annotations in the project." 
+                                primaryTypographyProps={{ variant: 'body2' }}
+                            />
+                        </ListItem>
+                    </List>
+                </Box>
+
+                <Divider sx={{ my: 3 }} />
+
+                {/* Annotation Management */}
+                <Box sx={{ mb: 3 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: 'primary.main' }}>
+                        5. Annotation Management
+                    </Typography>
+                    
+                    <List dense sx={{ mb: 2 }}>
+                        <ListItem sx={{ px: 0 }}>
+                            <ListItemIcon sx={{ minWidth: 36 }}><CheckCircleOutlineIcon fontSize="small" color="success" /></ListItemIcon>
+                            <ListItemText 
+                                primary="View Annotations: See the list of annotated words on the right-hand side of the screen." 
+                                primaryTypographyProps={{ variant: 'body2' }}
+                            />
+                        </ListItem>
+                        <ListItem sx={{ px: 0 }}>
+                            <ListItemIcon sx={{ minWidth: 36 }}><CheckCircleOutlineIcon fontSize="small" color="success" /></ListItemIcon>
+                            <ListItemText 
+                                primary="Delete Annotations: Remove specific annotations from the list." 
+                                primaryTypographyProps={{ variant: 'body2' }}
+                            />
+                        </ListItem>
+                        <ListItem sx={{ px: 0 }}>
+                            <ListItemIcon sx={{ minWidth: 36 }}><CheckCircleOutlineIcon fontSize="small" color="success" /></ListItemIcon>
+                            <ListItemText 
+                                primary="Reset Annotations: Clear all annotations if needed." 
+                                primaryTypographyProps={{ variant: 'body2' }}
+                            />
+                        </ListItem>
+                        <ListItem sx={{ px: 0 }}>
+                            <ListItemIcon sx={{ minWidth: 36 }}><CheckCircleOutlineIcon fontSize="small" color="success" /></ListItemIcon>
+                            <ListItemText 
+                                primary="Edit Annotations: Can edit annotated words if needed." 
+                                primaryTypographyProps={{ variant: 'body2' }}
+                            />
+                        </ListItem>
+                        <ListItem sx={{ px: 0 }}>
+                            <ListItemIcon sx={{ minWidth: 36 }}><CheckCircleOutlineIcon fontSize="small" color="success" /></ListItemIcon>
+                            <ListItemText 
+                                primary="Submit Annotations: Once all annotations for a sentence are complete, click Submit to save your work." 
+                                primaryTypographyProps={{ variant: 'body2' }}
+                            />
+                        </ListItem>
+                    </List>
+                </Box>
+                
+                <Divider sx={{ my: 3 }} />
+
+                {/* Data Download & Intellectual Property */}
+                <Box sx={{ mb: 3 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: 'primary.main' }}>
+                        6. Data Download & Intellectual Property
                     </Typography>
                     <ListItem sx={{ px: 0, alignItems: 'flex-start' }}>
                         <ListItemIcon sx={{ minWidth: 36, mt: 0.5 }}><SecurityIcon fontSize="small" color="secondary" /></ListItemIcon>
                         <ListItemText 
                             primary={
                                 <Typography variant="body2" sx={{ mb: 1 }}>
-                                    All annotation data created through this platform remains the exclusive intellectual 
-                                    property of <strong>{organizationName}</strong>. Users are prohibited from copying, 
-                                    redistributing, or using project data outside the scope of authorized annotation tasks.
+                                    All annotation data created through this platform remains the intellectual 
+                                    property of <strong>{organizationName}</strong>. 
                                 </Typography>
                             }
                         />
                     </ListItem>
                     <Typography variant="body2" sx={{ ml: 6, mb: 1 }}>
-                        Completed annotations can be downloaded by authorized users (Admins and assigned Annotators) 
-                        from the project management interface for research purposes as permitted by {organizationName}.
+                        To download your annotations, return to the Projects Page and click on the Download icon 
+                        next to the relevant project. Download access is available for Admins, assigned Annotators, and Reviewers.
                     </Typography>
                 </Box>
                 
                 <Divider sx={{ my: 3 }} />
 
-                {/* Disclaimer & Support */}
+                {/* Continuous Improvement & Support */}
                 <Box sx={{ mb: 2 }}>
                     <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: 'primary.main' }}>
-                        5. Disclaimer & Platform Support
+                        7. Continuous Improvement & Support
                     </Typography>
                     <ListItem sx={{ px: 0, alignItems: 'flex-start' }}>
                         <ListItemIcon sx={{ minWidth: 36, mt: 0.5 }}><WarningIcon fontSize="small" color="warning" /></ListItemIcon>
                         <ListItemText 
                             primary={
                                 <Typography variant="body2">
-                                    The MWE Tool is provided "as is" without warranties of any kind. {organizationName} 
-                                    reserves the right to terminate access for violations of these terms or annotation guidelines.
+                                    We are continuously working on improving the NE Tool based on user feedback. 
+                                    The platform is provided for annotation purposes as described in the guidelines.
                                 </Typography>
                             }
                         />
                     </ListItem>
                     <Typography variant="body2" sx={{ mt: 2 }}>
-                        We continuously improve the platform based on user feedback. For technical support, 
-                        questions about annotation guidelines, or to report issues, please contact our team at{' '}
-                        <strong>mwa.iiith@gmail.com</strong>.
+                        Feel free to share your suggestions for better functionality and usability. 
+                        If you have any questions or need further assistance, please contact our team.
                     </Typography>
                 </Box>
             </DialogContent>
