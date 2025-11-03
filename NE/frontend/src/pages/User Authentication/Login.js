@@ -56,19 +56,17 @@ export default function Login() {
                 return;
             }
 
-            // --- CRITICAL FIX 1: Store Token and User Role/Username for RoleRouter ---
             if (data.token && data.username && data.role) {
-                // The RoleRouter needs the role and username, stored as a JSON object under 'user'
-                localStorage.setItem('token', data.token);
-                localStorage.setItem('user', JSON.stringify({
-                    username: data.username,
-                    role: data.role
-                }));
+                // Store with keys that authUtils.js expects
+                localStorage.setItem('jwt_token', data.token);
+                localStorage.setItem('username', data.username);
+                localStorage.setItem('userRole', data.role);
+                
                 console.log(`[Login Success] Stored token and user role: ${data.role}`);
             } else {
-                 console.error('[Login] ERROR: API response is missing critical fields (token, username, or role).');
-                 setError("Login response missing key data. Please contact support.");
-                 return;
+                console.error('[Login] ERROR: API response missing critical fields');
+                setError("Login response missing key data. Please contact support.");
+                return;
             }
             
             // --- CRITICAL FIX 2: Universal Redirection ---

@@ -1180,11 +1180,7 @@ def login():
     user_role = user.get("role", "user").lower()
     is_approved = user.get("is_approved", False)
     
-    # --- NEW Approval Check Logic ---
-    
-    # 1. Developer Role Check (Only Developers and approved Admins/Users/Reviewers can proceed)
-    # The Developer role is the highest level, and while their registration is pending, 
-    # they shouldn't log in either.
+    # --- APPROVAL CHECK FOR ALL USERS (including admins) ---
     if not is_approved:
         # Check if the registration was explicitly rejected
         if user.get("is_rejected", False):
@@ -1203,9 +1199,7 @@ def login():
             "message": f"Your account is pending approval by a {approval_target}."
         }), 403
 
-    # --- End NEW Approval Check Logic ---
-
-    # Generate JWT token (only runs if is_approved is True)
+    # Generate JWT token (only runs if user is approved)
     token = generate_jwt_token(username_or_email, user_role)
     if not token:
         return jsonify({"message": "Failed to generate authentication token"}), 500
@@ -1220,6 +1214,7 @@ def login():
         "expires_in_hours": app.config['JWT_EXPIRATION_HOURS']
     })
     
+     
 @app.route("/refresh-token", methods=["POST"])
 @token_required
 def refresh_token():
@@ -1431,6 +1426,32 @@ Sentence Annotation System Team
 
 # --- NEW DEVELOPER ROUTE FOR APPROVAL ---
 
+
+@app.route("/developer/feedback", methods=["GET"])
+@developer_required
+def get_developer_feedback():
+    """Fetches all submitted user feedback for developer view."""
+    try:
+        feedbacks_cursor = feedback_collection.find().sort("time", -1) 
+        
+        feedbacks_list = []
+        for feedback in feedbacks_cursor:
+            feedback_data = {
+                "id": str(feedback["_id"]),
+                "email": feedback.get("email", "anonymous@example.com"),
+                "feedback_text": feedback.get("feedback_text", "[No text]"),
+                "file_path": feedback.get("file_path", "None"),
+                "time": feedback.get("time", get_ist_time()).strftime('%Y-%m-%d %H:%M:%S IST'),
+                "is_reviewed": feedback.get("is_reviewed", False)
+            }
+            feedbacks_list.append(feedback_data)
+        
+        return jsonify({"feedbacks": feedbacks_list}), 200
+        
+    except Exception as e:
+        print(f"Error fetching feedback for developer: {e}")
+        return jsonify({"error": "Internal server error while fetching feedbacks"}), 500
+    
 @app.route("/developer/pending-users", methods=["GET"])
 @developer_required
 def get_developer_pending_users():
