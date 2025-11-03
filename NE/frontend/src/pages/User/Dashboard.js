@@ -1,26 +1,35 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
     Container, Typography, TextField, Button, Box, List, ListItem, ListItemText,
-    Paper, Dialog, DialogActions, DialogContent,
+    Paper, Dialog, DialogActions, DialogContent, Divider, ListItemIcon,
     DialogContentText, DialogTitle, Chip, CircularProgress, 
-    Grid, LinearProgress, Card, CardContent ,FormControl, InputLabel, Select, MenuItem, useTheme, Alert
+    Grid, LinearProgress, Card, CardContent ,FormControl, InputLabel, Select, MenuItem, useTheme, Alert,
+    Drawer, IconButton, Badge 
 } from "@mui/material";
-import FeedbackIcon from '@mui/icons-material/Feedback';
+import FeedbackIcon from '@mui/icons-material/Feedback'; 
 import RateReviewIcon from '@mui/icons-material/RateReview';
-import AssignmentLateIcon from '@mui/icons-material/AssignmentLate'; 
-import {  getToken, removeToken } from '../../components/authUtils'; 
-
-
+import AssignmentLateIcon from '@mui/icons-material/AssignmentLate'
+import MenuIcon from '@mui/icons-material/Menu';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
-import FeedbackDialog from './FeedbackDialog'; 
+import RuleIcon from '@mui/icons-material/Rule'; // User Guidelines
+import DescriptionIcon from '@mui/icons-material/Description'; // Annotation Guidelines
+import QueryStatsIcon from '@mui/icons-material/QueryStats'; // Tag Stats
+import LogoutIcon from '@mui/icons-material/Logout'; // Logout Icon
+import { getToken, removeToken } from '../../components/authUtils'; // <-- FIXED PATH
+
+
+import FeedbackDialog from './FeedbackDialog'; // <-- FIXED PATH
+import { SentencesRevisionNotesDialog } from './SentencesRevisionNotesDialog';//<-- FIXED PATH
 
 const API_BASE_URL = 'http://127.0.0.1:5001';
+
 
 export default function Dashboard() {
     const { username } = useParams();
     const navigate = useNavigate();
     const theme = useTheme();
+    const location = useLocation();
 
     // --- State Management ---
     const [userData, setUserData] = useState(null);
@@ -51,6 +60,7 @@ export default function Dashboard() {
 
     const [revisionList, setRevisionList] = useState([]);
     const [isRevisionNotesDialogOpen, setIsRevisionNotesDialogOpen] = useState(false);
+    const [drawerOpen, setDrawerOpen] = useState(false); // <-- NEW DRAWER STATE
 
 
     const [reviewStatusMessage, setReviewStatusMessage] = useState(null);
@@ -855,117 +865,93 @@ const handleRequestReview = async () => {
     
     const getProjectCardColor = (isPending) => isPending ? '#ffcdd2' : '#c8e6c9';
 
-    const renderHeaderBar = () => (
-        <Box 
-            sx={{ 
-                display: 'flex', 
-                justifyContent: 'space-between', 
-                alignItems: 'center', 
-                height: '60px', 
-                bgcolor: theme.palette.primary.main, 
-                color: 'white', 
-                p: 2, 
-                width: '100%',
-                boxSizing: 'border-box',
-                flexShrink: 0 
-            }}
-        >
-            <Typography variant="h6" fontWeight={500}>
-                NER Annotator - {userData?.full_name || username || "User"}
-            </Typography>
-            
-            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-                {/* User Guidelines Button */}
-                <Button 
-                    variant="text" 
-                    onClick={() => window.open('/NER Tool - User Guidelines.pdf', '_blank')}
-                    sx={{ color: 'white' }}
-                >
-                    SHOW USER GUIDELINES
-                </Button>
-                
-                {/* Annotation Guidelines Button */}
-                <Button 
-                    variant="text"
-                    onClick={() => window.open('/ER_Guidelines.pdf', '_blank')}
-                    sx={{ color: 'white' }}
-                >
-                    SHOW ANNOTATION GUIDELINES
-                </Button>
-                
-                {/* Give Feedback Button */}
-                <Button 
-                    variant="text" 
-                    startIcon={<FeedbackIcon />}
-                    onClick={() => setIsFeedbackOpen(true)}
-                    sx={{ color: 'white' }}
-                >
-                    Give Feedback
-                </Button>
-                
-                {/* Tag Stats Button */}
-                <Button 
-                    variant="text" 
-                    onClick={handleOpenStats}
-                    sx={{ color: 'white' }}
-                >
-                    TAG STATS
-                </Button>
+    const handleDrawerNavigation = (path, action) => {
+        setDrawerOpen(false);
+        if (path) {
+            navigate(path);
+        } else if (action) {
+            action();
+        }
+    };
+    
+    // --- NEW: Navigation Item List ---
+    const navItems = [
+        { name: 'User Guidelines', action: () => window.open('/MWE Tool - User Guidelines.pdf', '_blank'), icon: RuleIcon, path: null },
+        { name: 'Annotation Guidelines', action: () => window.open('/MWE_Guidelines.pdf', '_blank'), icon: DescriptionIcon, path: null },
+        { name: 'Give Feedback', action: () => setIsFeedbackOpen(true), icon: FeedbackIcon, path: null },
+        { name: 'Revision Notes', action: () => setIsRevisionNotesDialogOpen(true), icon: AssignmentLateIcon, path: null, badge: revisionList.length },
+        { name: 'Tag Statistics', action: handleOpenStats, icon: QueryStatsIcon, path: null },
+        { name: 'Logout', action: handleLogout, icon: LogoutIcon, path: null },
+    ];
 
-                <Button 
-                variant="contained" 
-                onClick={() => setIsRevisionNotesDialogOpen(true)}
-                startIcon={<AssignmentLateIcon />}
-                sx={{ 
-                    ml: 2, 
-                    bgcolor: revisionList.length > 0 ? '#ff9800' : '#9e9e9e', 
-                    color: 'white',
-                    '&:hover': { 
-                        bgcolor: revisionList.length > 0 ? '#fb8c00' : '#757575' 
-                    } 
-                }}
-            >
-                Revision Notes 
-                {revisionList.length > 0 && 
-                    <Chip 
-                        label={revisionList.length} 
-                        size="small" 
-                        sx={{ 
-                            ml: 1, 
-                            bgcolor: 'white', 
-                            color: revisionList.length > 0 ? '#ff9800' : '#9e9e9e', 
-                            fontWeight: 'bold' 
-                        }} 
-                    />
-                }
-            </Button>
-                
-                {/* Logout Button (Theme usage fixed here too) */}
-                <Button 
-                    variant="outlined" 
-                    size="small"
-                    sx={{ 
-                        color: 'white', 
-                        borderColor: 'white', 
-                        '&:hover': { 
-                            backgroundColor: theme.palette.primary.light, // Using theme
-                            borderColor: 'white'
-                        } 
-                    }} 
-                    onClick={handleLogout}
-                >
-                    LOGOUT
-                </Button>
-            </Box>
-        </Box>
-    );
 
     // --- Main Render ---
 
     return (
         
         <Container maxWidth="l" sx={{ overflow: 'hidden', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-            {renderHeaderBar()}
+            {/* --- NEW: HAMBURGER NAVBAR --- */}
+            <Box 
+                sx={{ 
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center', 
+                    height: '60px', bgcolor: theme.palette.primary.main, color: 'white', 
+                    p: 2, width: '100%', boxSizing: 'border-box', flexShrink: 0 
+                }}
+            >
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <IconButton
+                        color="inherit" 
+                        aria-label="open drawer"
+                        onClick={() => setDrawerOpen(true)} 
+                        edge="start"
+                        sx={{ mr: 2 }}
+                    >
+                        <Badge badgeContent={revisionList.length} color="error" overlap="circular" max={99}>
+                            <MenuIcon /> 
+                        </Badge>
+                    </IconButton>
+                    <Typography variant="h6" fontWeight={500}>
+                        MWE Annotator - {userData?.full_name || username || "User"}
+                    </Typography>
+                </Box>
+                
+                {/* --- DRAWER (HAMBURGER MENU) --- */}
+                <Drawer
+                    anchor="left" 
+                    open={drawerOpen}
+                    onClose={() => setDrawerOpen(false)}
+                    PaperProps={{
+                        sx: { width: 280, bgcolor: theme.palette.background.paper }
+                    }}
+                >
+                    <Box sx={{ p: 2, bgcolor: theme.palette.primary.main, color: 'white', mb: 1 }}>
+                        <Typography variant="h6" fontWeight="bold">User Menu</Typography>
+                        <Typography variant="subtitle2">{username}</Typography>
+                    </Box>
+                    <Divider />
+                    <List>
+                        {navItems.map((item) => (
+                            <ListItem 
+                                key={item.name} 
+                                button 
+                                onClick={() => handleDrawerNavigation(item.path, item.action)}
+                            >
+                                <ListItemIcon>
+                                    <Badge 
+                                        badgeContent={item.badge || 0} 
+                                        color={item.name === 'Revision Notes' ? 'error' : 'default'} 
+                                        overlap="circular" max={99}
+                                    >
+                                        <item.icon color="primary" />
+                                    </Badge>
+                                </ListItemIcon>
+                                <ListItemText primary={item.name} />
+                            </ListItem>
+                        ))}
+                    </List>
+                </Drawer>
+            </Box>
+            {/* --- END: NEW HAMBURGER NAVBAR --- */}
             <Paper elevation={3} sx={{ p: 4, mt: 4, mb: 4, maxHeight: '90vh', overflow: 'hidden' }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                     <Typography variant="h4" gutterBottom sx={{ mb: 0 }}>Welcome, {userData?.full_name || username || "User"}</Typography>

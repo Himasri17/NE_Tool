@@ -1,0 +1,252 @@
+import React, { useState, useEffect } from 'react';
+import {
+    Dialog, DialogTitle, DialogContent, DialogActions,
+    Button, Typography, Box, List, ListItem, ListItemText,
+    Chip, Alert, Divider, CircularProgress
+} from '@mui/material';
+import AssignmentLateIcon from '@mui/icons-material/AssignmentLate';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import { getToken, removeToken } from '../../components/authUtils'; 
+
+const API_BASE_URL = 'http://127.0.0.1:5001';
+
+export function SentencesRevisionNotesDialog({ 
+    open, 
+    onClose, 
+    username,
+    onNavigateToSentence 
+}) {
+    const [revisionNotes, setRevisionNotes] = useState([]);
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState(null);
+
+    // Fetch revision notes when dialog opens
+    useEffect(() => {
+        if (open && username) {
+            fetchRevisionNotes();
+        }
+    }, [open, username]);
+
+    const fetchRevisionNotes = async () => {
+        try {
+            setIsLoading(true);
+            setError(null);
+            
+            const token = getToken();
+            if (!token) {
+                throw new Error('No authentication token found');
+            }
+
+            const response = await fetch(`${API_BASE_URL}/api/annotator/revision_notes/${username}`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                if (response.status === 401) {
+                    // Token expired or invalid
+                    removeToken();
+                    window.location.href = '/'; // Redirect to login
+                    return;
+                }
+                throw new Error(`Failed to fetch revision notes: ${response.status}`);
+            }
+
+            const notes = await response.json();
+            setRevisionNotes(notes);
+        } catch (error) {
+            console.error('Error fetching revision notes:', error);
+            setError(error.message);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleAcknowledge = async (sentenceId) => {
+        try {
+            const token = getToken();
+            const response = await fetch(`${API_BASE_URL}/api/annotator/acknowledge_revision`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    sentence_id: sentenceId
+                })
+            });
+
+            if (response.ok) {
+                // Remove the acknowledged note from the list
+                setRevisionNotes(prev => prev.filter(note => note.sentenceId !== sentenceId));
+                
+                // Call the parent callback to navigate to the sentence
+                if (onNavigateToSentence) {
+                    onNavigateToSentence(sentenceId);
+                }
+                
+                // Close the dialog after navigation
+                onClose();
+            }
+        } catch (err) {
+            console.error('Error acknowledging revision:', err);
+            setError('Failed to acknowledge revision. Please try again.');
+        }
+    };
+
+    const handleViewSentence = (sentenceId) => {
+        if (onNavigateToSentence) {
+            onNavigateToSentence(sentenceId);
+            onClose(); // Close dialog after navigation
+        }
+    };
+
+    return (
+        <Dialog 
+            open={open} 
+            onClose={onClose}
+            maxWidth="md"
+            fullWidth
+        >
+            <DialogTitle>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <AssignmentLateIcon color="warning" />
+                    <Typography variant="h6">Revision Notes - Feedback from Reviewer</Typography>
+                </Box>
+            </DialogTitle>
+            
+            <DialogContent>
+                {error && (
+                    <Alert severity="error" sx={{ mb: 2 }}>
+                        {error}
+                    </Alert>
+                )}
+
+                {isLoading ? (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+                        <CircularProgress />
+                    </Box>
+                ) : revisionNotes.length === 0 ? (
+                    <Alert severity="info">
+                        No pending revision notes. Great job! 🎉
+                    </Alert>
+                ) : (
+                    <List>
+                        {revisionNotes.map((note, index) => (
+                            <React.Fragment key={note.sentenceId}>
+                                <ListItem alignItems="flex-start">
+                                    <ListItemText
+                                        primary={
+                                            <Box sx={{ mb: 1 }}>
+                                                <Typography variant="subtitle1" fontWeight="bold">
+                                                    Sentence: 
+                                                </Typography>
+                                                <Typography variant="body2" sx={{ 
+                                                    fontStyle: 'italic', 
+                                                    backgroundColor: '#f5f5f5',
+                                                    p: 1,
+                                                    borderRadius: 1,
+                                                    mt: 0.5
+                                                }}>
+                                                    "{note.sentenceText}"
+                                                </Typography>
+                                            </Box>
+                                        }
+                                        secondary={
+                                            <Box sx={{ mt: 1 }}>
+                                                {/* Rejected Tags */}
+                                                {note.rejectedTags && note.rejectedTags.length > 0 && (
+                                                    <Box sx={{ mb: 1 }}>
+                                                        <Typography variant="subtitle2" color="error">
+                                                            Rejected Tags:
+                                                        </Typography>
+                                                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
+                                                            {note.rejectedTags.map((tag, tagIndex) => (
+                                                                <Chip 
+                                                                    key={tagIndex}
+                                                                    label={tag}
+                                                                    color="error"
+                                                                    size="small"
+                                                                    variant="outlined"
+                                                                />
+                                                            ))}
+                                                        </Box>
+                                                    </Box>
+                                                )}
+
+                                                {/* Reviewer Feedback */}
+                                                <Box sx={{ mb: 1 }}>
+                                                    <Typography variant="subtitle2" color="text.primary">
+                                                        Reviewer Feedback:
+                                                    </Typography>
+                                                    <Typography variant="body2" sx={{ 
+                                                        backgroundColor: '#fff3e0',
+                                                        p: 1,
+                                                        borderRadius: 1,
+                                                        mt: 0.5
+                                                    }}>
+                                                        {note.reviewerComment || "No specific feedback provided."}
+                                                    </Typography>
+                                                </Box>
+
+                                                {/* Reviewer Info */}
+                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                    <Typography variant="caption" color="text.secondary">
+                                                        Reviewed by: {note.reviewer} • {note.rejectionDate}
+                                                    </Typography>
+                                                </Box>
+                                            </Box>
+                                        }
+                                    />
+                                </ListItem>
+                                
+                                {/* Action Buttons */}
+                                <Box sx={{ px: 2, pb: 2 }}>
+                                    <Button
+                                        variant="contained"
+                                        color="primary"
+                                        startIcon={<VisibilityIcon />}
+                                        onClick={() => handleViewSentence(note.sentenceId)}
+                                        size="small"
+                                        sx={{ mr: 1 }}
+                                    >
+                                        View Sentence
+                                    </Button>
+                                    <Button
+                                        variant="outlined"
+                                        color="warning"
+                                        onClick={() => handleAcknowledge(note.sentenceId)}
+                                        size="small"
+                                    >
+                                        Acknowledge & Start Revision
+                                    </Button>
+                                </Box>
+
+                                {index < revisionNotes.length - 1 && (
+                                    <Divider sx={{ my: 1 }} />
+                                )}
+                            </React.Fragment>
+                        ))}
+                    </List>
+                )}
+            </DialogContent>
+
+            <DialogActions>
+                <Button onClick={onClose} color="primary">
+                    Close
+                </Button>
+                {revisionNotes.length > 0 && (
+                    <Button 
+                        onClick={fetchRevisionNotes} 
+                        color="secondary"
+                        disabled={isLoading}
+                    >
+                        Refresh
+                    </Button>
+                )}
+            </DialogActions>
+        </Dialog>
+    );
+}
