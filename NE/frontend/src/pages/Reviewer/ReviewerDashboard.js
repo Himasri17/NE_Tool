@@ -16,7 +16,7 @@ import { getAuthHeaders, removeToken} from '../../components/authUtils';
 // UPDATE THESE IMPORT STATEMENTS
 import ContactUsDialog from '../User/ContactUsDialog';
 import FeedbackDialog from '../User/FeedbackDialog';
-import TermsDialog from '../User Authentication/TermsDialog'; // ADD THIS IMPORT
+import TermsDialog from '../UserAuthentication/TermsDialog'; // ADD THIS IMPORT
 
 const API_BASE_URL = 'http://127.0.0.1:5001';
 

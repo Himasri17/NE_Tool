@@ -21,7 +21,7 @@ import CreateProjectModal from './Createprojectmodal';
 import AssignUsersDialog from './AssignUsersDialog';
 import EditProjectModal from './EditProjectModal';
 import ContactUsDialog from '../User/ContactUsDialog';
-import TermsDialog from '../User Authentication/TermsDialog';
+import TermsDialog from '../UserAuthentication/TermsDialog';
 import { getAuthHeaders, removeToken ,validateToken} from '../../components/authUtils'; 
 import Navbar from '../../components/Navbar';
 
