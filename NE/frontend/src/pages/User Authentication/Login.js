@@ -10,7 +10,6 @@ import PersonIcon from '@mui/icons-material/Person';
 import LockIcon from '@mui/icons-material/Lock';
 import TermsDialog from './TermsDialog';
 import SupportDialog from './SupportDialog';
-// Assuming setToken/setUsername save to localStorage. We'll use localStorage directly for consistency.
 
 export default function Login() {
     const [username, setLoginUsername] = useState('');
@@ -47,7 +46,7 @@ export default function Login() {
                 const message = data.error || data.message || "Login failed. Please try again.";
                 
                 if (message.includes("awaiting approval")) {
-                    setError(`Your account is pending approval by a ${data.role === 'admin' ? 'Developer' : 'Admin'}. You will be notified by email when activated.`);
+                    setError(`Your account is pending approval by a ${data.role === 'admin' ? 'developer' : 'Admin'}. You will be notified by email when activated.`);
                 } else if (message.includes("rejected")) {
                     setError(`Your account registration was rejected. Reason: ${data.rejection_reason || 'Contact support.'}`);
                 } else {
@@ -56,22 +55,34 @@ export default function Login() {
                 return;
             }
 
+            // In Login.js - Replace the storage section after successful login
             if (data.token && data.username && data.role) {
-                // Store with keys that authUtils.js expects
+                // Store token separately
                 localStorage.setItem('jwt_token', data.token);
+                
+                // Store user data as a JSON object under 'user' key (this is what RoleRouter expects)
+                const userData = {
+                    username: data.username,
+                    role: data.role,
+                    token: data.token
+                };
+                localStorage.setItem('user', JSON.stringify(userData));
+                
+                // Also store individual fields for backward compatibility
                 localStorage.setItem('username', data.username);
                 localStorage.setItem('userRole', data.role);
                 
-                console.log(`[Login Success] Stored token and user role: ${data.role}`);
+                console.log(`[Login Success] Stored user data and token for role: ${data.role}`);
+                
+                // Navigate to /home - RoleRouter will handle the redirection
+                navigate('/home'); 
+
             } else {
                 console.error('[Login] ERROR: API response missing critical fields');
                 setError("Login response missing key data. Please contact support.");
                 return;
             }
-            
-            // --- CRITICAL FIX 2: Universal Redirection ---
-            // Navigate to '/home'. The RoleRouter component will automatically read 
-            // the 'user' object from localStorage and redirect to the specific dashboard path.
+
             navigate('/home'); 
 
         } catch (err) {

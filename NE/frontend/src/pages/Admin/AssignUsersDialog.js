@@ -1,4 +1,4 @@
-// Create a new file: AssignUsersDialog.js
+// AssignUsersDialog.js
 import React, { useState, useEffect } from 'react';
 import {
     Dialog, DialogTitle, DialogContent, DialogActions,
@@ -7,21 +7,28 @@ import {
 } from '@mui/material';
 import { getAuthHeaders } from '../../components/authUtils';    
 
-
-export default function AssignUsersDialog({ open, onClose, projectId, projectName, adminUsername }) {
+export default function AssignUsersDialog({ open, onClose, projectId, projectName, adminUsername, projectLanguage }) {
     const [availableUsers, setAvailableUsers] = useState([]);
     const [selectedUsers, setSelectedUsers] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState('');
 
-    // Fetch available users
+    // Fetch available users - UPDATED to filter by language
     const fetchAvailableUsers = async () => {
         setIsLoading(true);
         try {
-            const response = await fetch('http://127.0.0.1:5001/api/users-list', {
+            let url = 'http://127.0.0.1:5001/api/users-list';
+            
+            // If project language is available, filter by language
+            if (projectLanguage) {
+                url = `http://127.0.0.1:5001/api/users-by-language?language=${encodeURIComponent(projectLanguage)}`;
+            }
+            
+            const response = await fetch(url, {
                 headers: getAuthHeaders()
             });
+            
             if (response.ok) {
                 const users = await response.json();
                 setAvailableUsers(users);
@@ -42,7 +49,7 @@ export default function AssignUsersDialog({ open, onClose, projectId, projectNam
             setSelectedUsers([]);
             setError('');
         }
-    }, [open]);
+    }, [open, projectLanguage]); // Added projectLanguage as dependency
 
     const handleAssignUsers = async () => {
         if (selectedUsers.length === 0) {
@@ -87,12 +94,16 @@ export default function AssignUsersDialog({ open, onClose, projectId, projectNam
 
     return (
         <Dialog open={open} onClose={() => handleClose()} maxWidth="sm" fullWidth>
-            {/* FIXED: Remove nested Typography to prevent invalid heading nesting */}
             <DialogTitle>
                 Assign Users to Project
                 <Typography component="div" variant="subtitle2" color="text.secondary">
                     {projectName}
                 </Typography>
+                {projectLanguage && (
+                    <Typography component="div" variant="body2" color="primary" sx={{ mt: 0.5 }}>
+                        Language: {projectLanguage}
+                    </Typography>
+                )}
             </DialogTitle>
             
             <DialogContent>
@@ -123,11 +134,17 @@ export default function AssignUsersDialog({ open, onClose, projectId, projectNam
                             )}
                             label="Select Users"
                         >
-                            {availableUsers.map((user) => (
-                                <MenuItem key={user} value={user}>
-                                    {user}
+                            {availableUsers.length > 0 ? (
+                                availableUsers.map((user) => (
+                                    <MenuItem key={user} value={user}>
+                                        {user}
+                                    </MenuItem>
+                                ))
+                            ) : (
+                                <MenuItem disabled>
+                                    No users available for {projectLanguage || 'selected language'}
                                 </MenuItem>
-                            ))}
+                            )}
                         </Select>
                     </FormControl>
                 )}
@@ -135,6 +152,12 @@ export default function AssignUsersDialog({ open, onClose, projectId, projectNam
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
                     Selected {selectedUsers.length} user(s)
                 </Typography>
+                
+                {projectLanguage && availableUsers.length === 0 && !isLoading && (
+                    <Alert severity="info" sx={{ mt: 2 }}>
+                        No users found for {projectLanguage}. Please make sure there are users registered for this language.
+                    </Alert>
+                )}
             </DialogContent>
 
             <DialogActions>

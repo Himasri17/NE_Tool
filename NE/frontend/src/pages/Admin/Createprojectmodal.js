@@ -38,15 +38,32 @@ export default function CreateProjectModal({ isOpen, onClose, adminUsername, onP
 
     useEffect(() => {
         if (isOpen) {
+            resetForm();
             fetchAvailableUsers();
         }
     }, [isOpen]);
 
-    // NEW: Function to fetch available users
-    const fetchAvailableUsers = async () => {
+    const resetForm = () => {
+        setProjectTitle('');
+        setProjectDescription('');
+        setLanguage('');
+        setAssignedUser(''); 
+        setTextFile(null);
+        setError('');
+        setIsSubmitting(false);
+    };
+
+    const fetchAvailableUsers = async (selectedLanguage = '') => {
         setIsLoadingUsers(true);
         try {
-            const response = await fetch('http://127.0.0.1:5001/api/users-list', {
+            let url = 'http://127.0.0.1:5001/api/users-list';
+            
+            // If a language is selected, use the language-filtered endpoint
+            if (selectedLanguage) {
+                url = `http://127.0.0.1:5001/api/users-by-language?language=${encodeURIComponent(selectedLanguage)}`;
+            }
+            
+            const response = await fetch(url, {
                 headers: getAuthHeaders()
             });
             if (response.ok) {
@@ -65,16 +82,18 @@ export default function CreateProjectModal({ isOpen, onClose, adminUsername, onP
     };
 
     const handleClose = () => {
-        setProjectTitle('');
-        setProjectDescription('');
-        setLanguage('');
-        setAssignedUser(''); 
-        setTextFile(null);
-        setError('');
-        setIsSubmitting(false);
+        resetForm();
         onClose();
     };
 
+    const handleLanguageChange = (e) => {
+        const selectedLanguage = e.target.value;
+        setLanguage(selectedLanguage);
+        // Clear assigned user when language changes
+        setAssignedUser('');
+        // Fetch users for the selected language
+        fetchAvailableUsers(selectedLanguage);
+    };
     const handleSubmit = async (event) => {
         event.preventDefault();
         setError('');
@@ -126,7 +145,7 @@ export default function CreateProjectModal({ isOpen, onClose, adminUsername, onP
                 return;
             }
 
-            // Success feedback
+            resetForm();
             alert(data.message);
             onProjectCreated(); // Trigger dashboard refresh and close modal
         } catch (err) {
@@ -170,7 +189,7 @@ export default function CreateProjectModal({ isOpen, onClose, adminUsername, onP
                     <Grid xs={12}>
                         <FormControl component="fieldset" required fullWidth>
                             <FormLabel component="legend" sx={{ mb: 1 }}>Language</FormLabel>
-                            <RadioGroup row name="language-selection" value={language} onChange={(e) => setLanguage(e.target.value)}>
+                            <RadioGroup row name="language-selection" value={language}  onChange={handleLanguageChange}>
                                 <Grid container spacing={1}>
                                     {LANGUAGE_OPTIONS.map((lang) => (
                                         <Grid xs={4} key={lang}>

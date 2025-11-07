@@ -31,86 +31,134 @@ export default function UserLogbook() {
     const [selectedSession, setSelectedSession] = useState(null);
     const [detailDialogOpen, setDetailDialogOpen] = useState(false);
 
-    // Fetch user sessions and statistics
-    // In UserLogBook.js - Update the fetchUserLogs function
-const fetchUserLogs = async () => {
+    // UserLogBook.js - Updated fetchUserLogs function
+    const fetchUserLogs = async () => {
     setIsLoading(true);
     try {
-        const [sessionsResponse, usersResponse] = await Promise.all([
-            fetch(`http://127.0.0.1:5001/api/activity-logs/${username}`, {
-                headers: getAuthHeaders()
-            }),
-            // Include ALL users (including reviewers) in the filter
-            fetch('http://127.0.0.1:5001/api/users-list', {
-                headers: getAuthHeaders()
-            })
-        ]);
+        console.log('🔍 [DEBUG] Starting fetchUserLogs...');
+        console.log('🔍 [DEBUG] Current username from params:', username);
+        
+        // Debug localStorage
+        const token = localStorage.getItem('jwt_token');
+        const userData = localStorage.getItem('user');
+        console.log('🔍 [DEBUG] Token exists:', !!token);
+        console.log('🔍 [DEBUG] User data:', userData);
+        
+        const authHeaders = getAuthHeaders();
+        console.log('🔍 [DEBUG] Auth headers:', authHeaders);
 
+        // Test the API endpoints individually first
+        console.log('🔍 [DEBUG] Testing /api/users/all endpoint...');
+        const usersResponse = await fetch('http://127.0.0.1:5001/api/users/all', {
+            headers: authHeaders
+        });
+        
+        console.log('🔍 [DEBUG] Users API Response Status:', usersResponse.status);
+        console.log('🔍 [DEBUG] Users API Response OK:', usersResponse.ok);
+        
+        if (!usersResponse.ok) {
+            const errorText = await usersResponse.text();
+            console.error('❌ [DEBUG] Users API Error:', errorText);
+            throw new Error(`Users API failed: ${usersResponse.status} - ${errorText}`);
+        }
+        
+        const usersData = await usersResponse.json();
+        console.log('🔍 [DEBUG] Users API Data:', usersData);
+        console.log('🔍 [DEBUG] Users count:', usersData.users?.length || 0);
+        
+        // Set users list
+        const usersArray = usersData.users || [];
+        setUsersList(usersArray);
+        console.log('🔍 [DEBUG] Users list set with:', usersArray.length, 'users');
+
+        // Now fetch activity logs
+        console.log('🔍 [DEBUG] Testing /api/activity-logs endpoint...');
+        const sessionsResponse = await fetch(`http://127.0.0.1:5001/api/activity-logs/${username}`, {
+            headers: authHeaders
+        });
+        
+        console.log('🔍 [DEBUG] Sessions API Response Status:', sessionsResponse.status);
+        console.log('🔍 [DEBUG] Sessions API Response OK:', sessionsResponse.ok);
+        
         if (sessionsResponse.ok) {
             const sessionsData = await sessionsResponse.json();
+            console.log('🔍 [DEBUG] Sessions API Data:', sessionsData);
+            console.log('🔍 [DEBUG] Sessions count:', sessionsData.length);
+            
             setUserSessions(sessionsData);
             setFilteredSessions(sessionsData);
-            
-            // Calculate user statistics
             calculateUserStats(sessionsData);
-        }
-
-        if (usersResponse.ok) {
-            const usersData = await usersResponse.json();
-            // Include all users (annotators and reviewers)
-            setUsersList(usersData);
+        } else {
+            const errorText = await sessionsResponse.text();
+            console.error('❌ [DEBUG] Sessions API Error:', errorText);
         }
 
     } catch (error) {
-        console.error('Error fetching user logs:', error);
+        console.error('❌ [DEBUG] Error in fetchUserLogs:', error);
+        // Show error to user
+        setUserSessions([]);
+        setFilteredSessions([]);
+        setUsersList([]);
     } finally {
         setIsLoading(false);
     }
-};
-
-    // In UserLogBook.js - Replace the calculateUserStats function
-const calculateUserStats = (sessions) => {
-    const stats = {
-        totalUsers: new Set(sessions.map(s => s.username)).size,
-        totalSessions: sessions.length,
-        totalAnnotations: 0,
-        totalTags: 0,
-        averageSessionTime: 0,
-        userBreakdown: {}
     };
+    // In UserLogBook.js - Replace the calculateUserStats function
+    const calculateUserStats = (sessions) => {
+        const stats = {
+            totalUsers: new Set(sessions.map(s => s.username)).size,
+            totalSessions: sessions.length,
+            totalAnnotations: 0,
+            totalTags: 0,
+            averageSessionTime: 0,
+            userBreakdown: {}
+        };
 
-    const userData = {};
+        const userData = {};
 
-    sessions.forEach(session => {
-        // ENHANCED: Include reviewer sessions and sessions with meaningful activities
-        const hasRealTasks = session.tasksDone && session.tasksDone.some(task => {
-            // Skip placeholder tasks
-            if (task === "Session ended with no tasks" || 
-                task === "Active session - no tasks recorded") {
+        sessions.forEach(session => {
+            // ENHANCED: Include reviewer sessions and sessions with meaningful activities
+            const hasRealTasks = session.tasksDone && session.tasksDone.some(task => {
+                // Skip placeholder tasks
+                if (task === "Session ended with no tasks" || 
+                    task === "Active session - no tasks recorded") {
+                    return false;
+                }
+                
+                // Include reviewer activities (review, approve, reject actions)
+                if (task.toLowerCase().includes('review') || 
+                    task.toLowerCase().includes('approve') || 
+                    task.toLowerCase().includes('reject')) {
+                    return true;
+                }
+                
+                // Include annotation activities
+                if (task.toLowerCase().includes('annotat') || 
+                    task.toLowerCase().includes('tag') ||
+                    task.toLowerCase().includes('mwe') ||
+                    task.toLowerCase().includes('phrase')) {
+                    return true;
+                }
+                
                 return false;
-            }
+            });
             
-            // Include reviewer activities (review, approve, reject actions)
-            if (task.toLowerCase().includes('review') || 
-                task.toLowerCase().includes('approve') || 
-                task.toLowerCase().includes('reject')) {
-                return true;
+            // If no real tasks found, skip this session for detailed stats but count the user
+            if (!hasRealTasks) {
+                // Still count the user for total users
+                const user = session.username;
+                if (!userData[user]) {
+                    userData[user] = {
+                        sessions: 0,
+                        totalSessionTime: 0,
+                        annotations: 0,
+                        tags: 0,
+                        tasksCompleted: []
+                    };
+                }
+                return; // Skip detailed counting but user is still in totalUsers
             }
-            
-            // Include annotation activities
-            if (task.toLowerCase().includes('annotat') || 
-                task.toLowerCase().includes('tag') ||
-                task.toLowerCase().includes('NER') ||
-                task.toLowerCase().includes('phrase')) {
-                return true;
-            }
-            
-            return false;
-        });
-        
-        // If no real tasks found, skip this session for detailed stats but count the user
-        if (!hasRealTasks) {
-            // Still count the user for total users
+
             const user = session.username;
             if (!userData[user]) {
                 userData[user] = {
@@ -121,81 +169,68 @@ const calculateUserStats = (sessions) => {
                     tasksCompleted: []
                 };
             }
-            return; // Skip detailed counting but user is still in totalUsers
-        }
 
-        const user = session.username;
-        if (!userData[user]) {
-            userData[user] = {
-                sessions: 0,
-                totalSessionTime: 0,
-                annotations: 0,
-                tags: 0,
-                tasksCompleted: []
-            };
-        }
-
-        userData[user].sessions++;
-        
-        // Calculate session duration
-        if (session.loginTimeIST && session.logoutTimeIST) {
-            const loginTime = parseISTDate(session.loginTimeIST);
-            const logoutTime = parseISTDate(session.logoutTimeIST);
-            const duration = (logoutTime - loginTime) / (1000 * 60); // minutes
-            userData[user].totalSessionTime += duration;
-        }
-
-        // Enhanced task analysis for both annotators and reviewers
-        session.tasksDone?.forEach(task => {
-            if (task === "Session ended with no tasks" || 
-                task === "Active session - no tasks recorded") {
-                return; // Skip placeholder tasks
+            userData[user].sessions++;
+            
+            // Calculate session duration
+            if (session.loginTimeIST && session.logoutTimeIST) {
+                const loginTime = parseISTDate(session.loginTimeIST);
+                const logoutTime = parseISTDate(session.logoutTimeIST);
+                const duration = (logoutTime - loginTime) / (1000 * 60); // minutes
+                userData[user].totalSessionTime += duration;
             }
 
-            // Track reviewer activities
-            if (task.toLowerCase().includes('review') || 
-                task.toLowerCase().includes('approve') || 
-                task.toLowerCase().includes('reject')) {
-                // Count these as meaningful activities but not as annotations/tags
-                if (!userData[user].tasksCompleted.includes(task)) {
-                    userData[user].tasksCompleted.push(task);
+            // Enhanced task analysis for both annotators and reviewers
+            session.tasksDone?.forEach(task => {
+                if (task === "Session ended with no tasks" || 
+                    task === "Active session - no tasks recorded") {
+                    return; // Skip placeholder tasks
                 }
-                return;
-            }
 
-            // Track annotation activities
-            if (task.toLowerCase().includes('annotat') || 
-                task.toLowerCase().includes('tag') ||
-                task.toLowerCase().includes('NER') ||
-                task.toLowerCase().includes('phrase')) {
-                
-                if (task.toLowerCase().includes('annotat')) {
-                    userData[user].annotations++;
-                    stats.totalAnnotations++;
+                // Track reviewer activities
+                if (task.toLowerCase().includes('review') || 
+                    task.toLowerCase().includes('approve') || 
+                    task.toLowerCase().includes('reject')) {
+                    // Count these as meaningful activities but not as annotations/tags
+                    if (!userData[user].tasksCompleted.includes(task)) {
+                        userData[user].tasksCompleted.push(task);
+                    }
+                    return;
                 }
-                if (task.toLowerCase().includes('tag')) {
-                    userData[user].tags++;
-                    stats.totalTags++;
+
+                // Track annotation activities
+                if (task.toLowerCase().includes('annotat') || 
+                    task.toLowerCase().includes('tag') ||
+                    task.toLowerCase().includes('mwe') ||
+                    task.toLowerCase().includes('phrase')) {
+                    
+                    if (task.toLowerCase().includes('annotat')) {
+                        userData[user].annotations++;
+                        stats.totalAnnotations++;
+                    }
+                    if (task.toLowerCase().includes('tag')) {
+                        userData[user].tags++;
+                        stats.totalTags++;
+                    }
+                    
+                    // Track unique tasks
+                    if (!userData[user].tasksCompleted.includes(task)) {
+                        userData[user].tasksCompleted.push(task);
+                    }
                 }
-                
-                // Track unique tasks
-                if (!userData[user].tasksCompleted.includes(task)) {
-                    userData[user].tasksCompleted.push(task);
-                }
-            }
+            });
         });
-    });
 
-    // Calculate averages only for sessions with real tasks
-    const sessionsWithRealTasks = Object.values(userData).reduce((sum, user) => sum + user.sessions, 0);
-    if (sessionsWithRealTasks > 0) {
-        const totalTime = Object.values(userData).reduce((sum, user) => sum + user.totalSessionTime, 0);
-        stats.averageSessionTime = totalTime / sessionsWithRealTasks;
-    }
+        // Calculate averages only for sessions with real tasks
+        const sessionsWithRealTasks = Object.values(userData).reduce((sum, user) => sum + user.sessions, 0);
+        if (sessionsWithRealTasks > 0) {
+            const totalTime = Object.values(userData).reduce((sum, user) => sum + user.totalSessionTime, 0);
+            stats.averageSessionTime = totalTime / sessionsWithRealTasks;
+        }
 
-    stats.userBreakdown = userData;
-    setUserStats(stats);
-};
+        stats.userBreakdown = userData;
+        setUserStats(stats);
+    };
 
     // Parse IST date string to Date object
     const parseISTDate = (dateString) => {
@@ -417,9 +452,9 @@ const calculateUserStats = (sessions) => {
                             >
                                 <MenuItem value="">All Users</MenuItem>
                                 {usersList.map(user => (
-                                    <MenuItem key={user} value={user}>
-                                        {user}
-                                    </MenuItem>
+                                   <MenuItem key={user.username} value={user.username}>
+                            {user.username}
+                        </MenuItem>
                                 ))}
                             </Select>
                         </FormControl>

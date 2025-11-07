@@ -100,11 +100,7 @@ export default function ProjectSentencesReview() {
         fetchSentencesForReview();
     }, [fetchSentencesForReview]);
 
-    // --- Handlers ---
-    const handleLogout = async () => { 
-        removeToken();
-        navigate('/login'); 
-    };
+
     const handleBack = () => {
         navigate(`/admin/${username}`);
     };
@@ -130,7 +126,6 @@ export default function ProjectSentencesReview() {
     const handleNextPage = () => { setCurrentPage(prev => Math.min(prev + 1, totalPages)); };
     const handlePrevPage = () => { setCurrentPage(prev => Math.max(prev - 1, 1)); };
 
-    // --- Annotation Rendering Function ---
     const renderAnnotationView = (sentenceData) => {
         if (!sentenceData) {
             return <Alert severity="info">No sentence selected.</Alert>;
@@ -194,7 +189,7 @@ export default function ProjectSentencesReview() {
                                     <Chip 
                                         label={`${tag.text} (${tag.tag})`} 
                                         size="small"
-                                        color={tag.ERId ? "secondary" : "primary"}
+                                        color={tag.mweId ? "secondary" : "primary"}
                                         variant="filled"
                                         sx={{ fontWeight: 'bold' }}
                                     />
@@ -204,14 +199,14 @@ export default function ProjectSentencesReview() {
                     </Box>
                 )}
                 
-                {/* Debug Information */}
+                {/* Debug Information - FIXED: Use Box instead of Typography for the container */}
                 <Card variant="outlined" sx={{ mt: 3, backgroundColor: theme.palette.grey[50] }}>
                     <CardContent>
                         <Typography variant="subtitle2" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
                             <InfoIcon sx={{ mr: 1, fontSize: 18 }} />
                             Sentence Debug Info
                         </Typography>
-                        <Typography variant="body2" fontFamily="monospace" sx={{ fontSize: '0.75rem' }}>
+                        <Box component="div" fontFamily="monospace" sx={{ fontSize: '0.75rem' }}>
                             <div><strong>Sentence ID:</strong> {sentenceData._id}</div>
                             <div><strong>Is Annotated:</strong> {sentenceData.is_annotated ? 'Yes' : 'No'}</div>
                             <div><strong>Original Index:</strong> {sentenceData.original_index}</div>
@@ -220,7 +215,7 @@ export default function ProjectSentencesReview() {
                             {sentenceData.annotation_datetime && (
                                 <div><strong>Annotation Date:</strong> {new Date(sentenceData.annotation_datetime).toLocaleString()}</div>
                             )}
-                        </Typography>
+                        </Box>
                     </CardContent>
                 </Card>
             </Box>

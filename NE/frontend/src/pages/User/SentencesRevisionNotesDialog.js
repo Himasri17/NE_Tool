@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
     Dialog, DialogTitle, DialogContent, DialogActions,
     Button, Typography, Box, List, ListItem, ListItemText,
-    Chip, Alert, Divider, CircularProgress
+    Chip, Alert, Divider, CircularProgress, Grid, Paper
 } from '@mui/material';
 import AssignmentLateIcon from '@mui/icons-material/AssignmentLate';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -96,24 +96,29 @@ export function SentencesRevisionNotesDialog({
         }
     };
 
-    const handleViewSentence = (sentenceId) => {
-        if (onNavigateToSentence) {
-            onNavigateToSentence(sentenceId);
-            onClose(); // Close dialog after navigation
-        }
+    const formatTagDisplay = (tagObj) => {
+        if (typeof tagObj === 'string') return tagObj;
+        return `${tagObj.tag}: "${tagObj.text}"`;
     };
 
     return (
         <Dialog 
             open={open} 
             onClose={onClose}
-            maxWidth="md"
+            maxWidth="lg"
             fullWidth
         >
             <DialogTitle>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                     <AssignmentLateIcon color="warning" />
                     <Typography variant="h6">Revision Notes - Feedback from Reviewer</Typography>
+                    {revisionNotes.length > 0 && (
+                        <Chip 
+                            label={`${revisionNotes.length} pending`} 
+                            color="warning" 
+                            size="small" 
+                        />
+                    )}
                 </Box>
             </DialogTitle>
             
@@ -133,103 +138,127 @@ export function SentencesRevisionNotesDialog({
                         No pending revision notes. Great job! 🎉
                     </Alert>
                 ) : (
-                    <List>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                         {revisionNotes.map((note, index) => (
-                            <React.Fragment key={note.sentenceId}>
-                                <ListItem alignItems="flex-start">
-                                    <ListItemText
-                                        primary={
-                                            <Box sx={{ mb: 1 }}>
-                                                <Typography variant="subtitle1" fontWeight="bold">
-                                                    Sentence: 
-                                                </Typography>
-                                                <Typography variant="body2" sx={{ 
-                                                    fontStyle: 'italic', 
-                                                    backgroundColor: '#f5f5f5',
-                                                    p: 1,
-                                                    borderRadius: 1,
-                                                    mt: 0.5
-                                                }}>
+                            <Paper 
+                                key={note.sentenceId || index}
+                                elevation={1} 
+                                sx={{ 
+                                    p: 2,
+                                    border: '1px solid',
+                                    borderColor: note.rejectionType === 'tag' ? 'warning.light' : 'error.light',
+                                    backgroundColor: note.rejectionType === 'tag' ? '#fffdf6' : '#fff5f5'
+                                }}
+                            >
+                                <Grid container spacing={2} alignItems="stretch">
+                                    {/* Sentence Column */}
+                                    <Grid item xs={12} md={4}>
+                                        <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                                            <Typography variant="subtitle2" fontWeight="bold" color="text.secondary" gutterBottom>
+                                                SENTENCE
+                                            </Typography>
+                                            <Paper 
+                                                variant="outlined" 
+                                                sx={{ 
+                                                    p: 1.5, 
+                                                    backgroundColor: 'white',
+                                                    flex: 1,
+                                                    display: 'flex',
+                                                    flexDirection: 'column'
+                                                }}
+                                            >
+                                                <Typography 
+                                                    variant="body2" 
+                                                    sx={{ 
+                                                        fontStyle: 'italic', 
+                                                        lineHeight: 1.4,
+                                                        flex: 1
+                                                    }}
+                                                >
                                                     "{note.sentenceText}"
                                                 </Typography>
+                                            </Paper>
+                                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1, alignItems: 'center' }}>
+                                                <Chip 
+                                                    label={note.rejectionType === 'tag' ? 'Tag Rejection' : 'Sentence Rejection'}
+                                                    color={note.rejectionType === 'tag' ? 'warning' : 'error'}
+                                                    size="small"
+                                                />
+                                                <Typography variant="caption" color="text.secondary">
+                                                    By {note.reviewer} • {note.rejectionDate}
+                                                </Typography>
                                             </Box>
-                                        }
-                                        secondary={
-                                            <Box sx={{ mt: 1 }}>
-                                                {/* Rejected Tags */}
-                                                {note.rejectedTags && note.rejectedTags.length > 0 && (
-                                                    <Box sx={{ mb: 1 }}>
-                                                        <Typography variant="subtitle2" color="error">
-                                                            Rejected Tags:
-                                                        </Typography>
-                                                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
-                                                            {note.rejectedTags.map((tag, tagIndex) => (
-                                                                <Chip 
-                                                                    key={tagIndex}
-                                                                    label={tag}
-                                                                    color="error"
-                                                                    size="small"
-                                                                    variant="outlined"
-                                                                />
-                                                            ))}
-                                                        </Box>
-                                                    </Box>
-                                                )}
+                                        </Box>
+                                    </Grid>
 
-                                                {/* Reviewer Feedback */}
-                                                <Box sx={{ mb: 1 }}>
-                                                    <Typography variant="subtitle2" color="text.primary">
-                                                        Reviewer Feedback:
-                                                    </Typography>
-                                                    <Typography variant="body2" sx={{ 
-                                                        backgroundColor: '#fff3e0',
-                                                        p: 1,
-                                                        borderRadius: 1,
-                                                        mt: 0.5
-                                                    }}>
-                                                        {note.reviewerComment || "No specific feedback provided."}
-                                                    </Typography>
-                                                </Box>
-
-                                                {/* Reviewer Info */}
-                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                    <Typography variant="caption" color="text.secondary">
-                                                        Reviewed by: {note.reviewer} • {note.rejectionDate}
-                                                    </Typography>
-                                                </Box>
+                                    {/* Rejected Tags Column */}
+                                    {note.rejectedTags && note.rejectedTags.length > 0 && (
+                                        <Grid item xs={12} md={3}>
+                                            <Typography variant="subtitle2" fontWeight="bold" color="error" gutterBottom>
+                                                REJECTED TAGS ({note.rejectedTags.length})
+                                            </Typography>
+                                            <Box sx={{ 
+                                                display: 'flex', 
+                                                flexWrap: 'wrap', 
+                                                gap: 0.5
+                                            }}>
+                                                {note.rejectedTags.map((tagObj, tagIndex) => (
+                                                    <Chip 
+                                                        key={tagIndex}
+                                                        label={formatTagDisplay(tagObj)}
+                                                        color="error"
+                                                        size="small"
+                                                        variant="outlined"
+                                                    />
+                                                ))}
                                             </Box>
-                                        }
-                                    />
-                                </ListItem>
-                                
-                                {/* Action Buttons */}
-                                <Box sx={{ px: 2, pb: 2 }}>
-                                    <Button
-                                        variant="contained"
-                                        color="primary"
-                                        startIcon={<VisibilityIcon />}
-                                        onClick={() => handleViewSentence(note.sentenceId)}
-                                        size="small"
-                                        sx={{ mr: 1 }}
-                                    >
-                                        View Sentence
-                                    </Button>
-                                    <Button
-                                        variant="outlined"
-                                        color="warning"
-                                        onClick={() => handleAcknowledge(note.sentenceId)}
-                                        size="small"
-                                    >
-                                        Acknowledge & Start Revision
-                                    </Button>
-                                </Box>
+                                        </Grid>
+                                    )}
 
-                                {index < revisionNotes.length - 1 && (
-                                    <Divider sx={{ my: 1 }} />
-                                )}
-                            </React.Fragment>
+                                    {/* Feedback Column */}
+                                    <Grid item xs={12} md={note.rejectedTags?.length > 0 ? 3 : 4}>
+                                        <Typography variant="subtitle2" fontWeight="bold" color="text.secondary" gutterBottom>
+                                            REVIEWER FEEDBACK
+                                        </Typography>
+                                        <Typography 
+                                            variant="body2" 
+                                            sx={{ 
+                                                lineHeight: 1.4,
+                                                color: 'text.primary'
+                                            }}
+                                        >
+                                            {note.reviewerComment || "No specific feedback provided."}
+                                        </Typography>
+                                    </Grid>
+
+                                    {/* Action Column */}
+                                    <Grid item xs={12} md={2}>
+                                        <Box sx={{ 
+                                            height: '100%', 
+                                            display: 'flex', 
+                                            flexDirection: 'column',
+                                            justifyContent: 'center'
+                                        }}>
+                                            <Button
+                                                variant="contained"
+                                                color="warning"
+                                                onClick={() => handleAcknowledge(note.sentenceId)}
+                                                size="medium"
+                                                startIcon={<VisibilityIcon />}
+                                                fullWidth
+                                                sx={{ 
+                                                    whiteSpace: 'nowrap',
+                                                    py: 1
+                                                }}
+                                            >
+                                                Revise Now
+                                            </Button>
+                                        </Box>
+                                    </Grid>
+                                </Grid>
+                            </Paper>
                         ))}
-                    </List>
+                    </Box>
                 )}
             </DialogContent>
 

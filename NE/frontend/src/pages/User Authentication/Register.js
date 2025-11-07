@@ -3,7 +3,8 @@ import { useNavigate, Link } from 'react-router-dom';
 import {
     Container, Box, Typography, TextField, Button, Paper, Link as MuiLink,
     InputAdornment, IconButton, FormControl, InputLabel, Select, MenuItem, useTheme,
-    CircularProgress
+    CircularProgress, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions,
+    Chip, OutlinedInput, Checkbox, ListItemText // ADD THESE IMPORTS
 } from '@mui/material';
 import PersonIcon from '@mui/icons-material/Person';
 import EmailIcon from '@mui/icons-material/Email';
@@ -14,9 +15,19 @@ import BusinessIcon from '@mui/icons-material/Business';
 import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import TermsDialog from './TermsDialog';
+import ContactUsDialog from '../User/ContactUsDialog';
 
-// IMPORT NEW COMPONENT
-import ContactUsDialog from '../User/ContactUsDialog'; 
+// ADD THIS CONSTANT FOR MULTI-SELECT STYLING
+const ITEM_HEIGHT = 48;
+const ITEM_PADDING_TOP = 8;
+const MenuProps = {
+  PaperProps: {
+    style: {
+      maxHeight: ITEM_HEIGHT * 4.5 + ITEM_PADDING_TOP,
+      width: 250,
+    },
+  },
+};
 
 export default function Register() {
     // --- State Management ---
@@ -25,17 +36,22 @@ export default function Register() {
     const [password, setPassword] = useState('');
     const [role, setRole] = useState('user');
     const [organization, setOrganization] = useState('');
-    const [termsDialogOpen, setTermsDialogOpen] = useState(false);
-    const [languages, setLanguages] = useState(''); 
+    const [languages, setLanguages] = useState([]); // CHANGE TO ARRAY FOR MULTI-SELECT
     const [error, setError] = useState('');
     const [showPassword, setShowPassword] = useState(false);
-    const [isLoading, setIsLoading] = useState(false); 
+    const [isLoading, setIsLoading] = useState(false);
+    
+    // Dialog states
+    const [isContactDialogOpen, setIsContactDialogOpen] = useState(false);
+    const [isTermsDialogOpen, setIsTermsDialogOpen] = useState(false);
+    
+    // Success/Error popup states
+    const [popupOpen, setPopupOpen] = useState(false);
+    const [popupTitle, setPopupTitle] = useState('');
+    const [popupMessage, setPopupMessage] = useState('');
+    const [popupType, setPopupType] = useState('success');
+
     const navigate = useNavigate();
-    
-    // RETAIN: Only the 'open' state is needed here to control the dialog
-    const [isContactDialogOpen, setIsContactDialogOpen] = useState(false); // <--- ADD DIALOG STATE
-    const [isTermsDialogOpen, setIsTermsDialogOpen] = useState(false); // <--- ADD DIALOG STATE
-    
     const theme = useTheme();
 
     // --- Dropdown Options (UNCHANGED) ---
@@ -46,26 +62,48 @@ export default function Register() {
         'NIT Manipur', 'NIT Meghalaya', 'JNU', 'CDAC-Pune', 'CDAC kolkata', 'Goa University'
     ];
 
-    // --- Register Handler (UPDATED WITH LOADING) ---
+    // --- Show Popup Handler ---
+    const showPopup = (title, message, type = 'error') => {
+        setPopupTitle(title);
+        setPopupMessage(message);
+        setPopupType(type);
+        setPopupOpen(true);
+    };
+
+    // --- Close Popup Handler ---
+    const handleClosePopup = () => {
+        setPopupOpen(false);
+        if (popupType === 'success') {
+            navigate('/login');
+        }
+    };
+
+    // --- Register Handler (UPDATED FOR MULTI-SELECT LANGUAGES) ---
     const handleRegister = async (event) => {
         event.preventDefault();
-        setError(''); // Clear previous errors
+        setError('');
         const isDeveloper = role.toLowerCase() === 'developer';
-        if (!fullName || !email || !password || !role) { // <--- FIXED LINE
+        const isAdmin = role.toLowerCase() === 'admin';
+        
+        // Validation
+        if (!fullName || !email || !password || !role) {
             setError("Please fill in all required fields.");
             return;
         }
     
-    // 2. Conditional Field Check (The logic you already implemented)
+        // Conditional Field Check
         if (!isDeveloper && !organization) {
-        // This checks non-developers who left Organization empty
             setError("Organization is mandatory for non-developer roles.");
             return;
         }
 
-    //}
+        // Language validation for Admin role
+        if (isAdmin && (!languages || languages.length === 0)) {
+            setError("Please select at least one language for Admin role.");
+            return;
+        }
 
-        setIsLoading(true); // START LOADING
+        setIsLoading(true);
 
         try {
             const response = await fetch('http://127.0.0.1:5001/register', {
@@ -75,32 +113,27 @@ export default function Register() {
                     fullName,
                     email,
                     password,
-                    // CRITICAL: Ensure the role variable (which holds 'reviewer') is sent
                     role, 
-                    organization : isDeveloper ? "SYSTEM_DEVELOPER" : organization,
-                    // Ensure languages is sent as an array
-                    languages: isDeveloper ? ["N/A"] : (Array.isArray(languages) ? languages : [languages]), 
+                    organization: isDeveloper ? "SYSTEM_DEVELOPER" : organization,
+                    languages: isDeveloper ? ["N/A"] : languages, // Use the array directly for multi-select
                 }),
             });
 
             const data = await response.json();
 
             if (!response.ok) {
-                // Handle HTTP errors (400, 403, etc.) returned by the backend
                 const message = data.message || "Registration failed. Please try again.";
-                setError(message);
+                showPopup("Registration Failed", message, 'error');
                 return;
             }
 
-            // Success: Display success message and navigate to login
-            alert(data.message);
-            navigate('/login');
+            showPopup("Registration Successful", data.message, 'success');
 
         } catch (err) {
             console.error("Network Error during registration:", err);
-            setError("Network error. Could not connect to the registration service.");
+            showPopup("Network Error", "Network error. Could not connect to the registration service.", 'error');
         } finally {
-            setIsLoading(false); // STOP LOADING
+            setIsLoading(false);
         }
     };
     
@@ -110,16 +143,26 @@ export default function Register() {
 
     // --- DIALOG HANDLERS ---
     const handleOpenContactDialog = (e) => { 
-        e.preventDefault(); // Prevent navigation/default link action
+        e.preventDefault();
         setIsContactDialogOpen(true); 
-    }; // <--- ADD OPEN HANDLER
+    };
     const handleCloseContactDialog = () => { setIsContactDialogOpen(false); };
     const handleOpenTermsDialog = (e) => { 
-        e.preventDefault(); // Prevent navigation/default link action
+        e.preventDefault();
         setIsTermsDialogOpen(true); 
-    }; // <--- ADD OPEN HANDLER
-    const handleCloseTermsDialog = () => { setIsTermsDialogOpen(false); }; 
+    };
+    const handleCloseTermsDialog = () => { setIsTermsDialogOpen(false); };
 
+    // --- Handle Role Change (RESET LANGUAGES WHEN ROLE CHANGES) ---
+    const handleRoleChange = (e) => {
+        const newRole = e.target.value;
+        setRole(newRole);
+        
+        // Reset languages when role changes to non-admin or developer
+        if (newRole.toLowerCase() !== 'admin' || newRole.toLowerCase() === 'developer') {
+            setLanguages([]);
+        }
+    };
 
     // --- JSX Render ---
     return (
@@ -131,7 +174,7 @@ export default function Register() {
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>Please fill in all the required information to get started.</Typography>
 
                     <Box component="form" onSubmit={handleRegister} noValidate sx={{ width: '100%' }}>
-                        {/* ... (All form fields: Full Name, Email, Password, Languages, Role, Organization - UNCHANGED) ... */}
+                        {/* Form fields remain unchanged */}
                         
                         <TextField 
                             margin="normal" 
@@ -179,19 +222,72 @@ export default function Register() {
                             disabled={isLoading}
                         />
                         
-                        <FormControl fullWidth margin="normal" required={role.toLowerCase() !== 'developer'} sx={{ mb: 2 }}>
+                        <FormControl 
+                            fullWidth 
+                            margin="normal" 
+                            required={role.toLowerCase() === 'admin'} 
+                            sx={{ mb: 2 }}
+                        >
                             <InputLabel id="languages-label">Select Languages</InputLabel>
-                            <Select 
-                                labelId="languages-label" 
-                                value={languages} 
-                                onChange={(e) => setLanguages(e.target.value)} 
-                                label="Select Languages"
-                                disabled={isLoading || role.toLowerCase() === 'developer'}
-                                startAdornment={<InputAdornment position="start"><LanguageIcon color="action" /></InputAdornment>}
-                                
-                            >
-                                {languageOptions.map((lang) => (<MenuItem key={lang} value={lang}>{lang}</MenuItem>))}
-                            </Select>
+                            
+                            {role.toLowerCase() === 'admin' ? (
+                                // Multi-select with checkboxes for admin
+                                <Select
+                                    labelId="languages-label"
+                                    multiple
+                                    value={languages}
+                                    onChange={(e) => setLanguages(e.target.value)}
+                                    input={<OutlinedInput label="Select Languages" />}
+                                    renderValue={(selected) => (
+                                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                                            {selected.map((value) => (
+                                                <Chip key={value} label={value} size="small" />
+                                            ))}
+                                        </Box>
+                                    )}
+                                    MenuProps={MenuProps}
+                                    disabled={isLoading}
+                                >
+                                    {languageOptions.map((language) => (
+                                        <MenuItem key={language} value={language}>
+                                            <Checkbox checked={languages.indexOf(language) > -1} />
+                                            <ListItemText primary={language} />
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            ) : (
+                                // Single-select for non-admin (except developer)
+                                <Select 
+                                    labelId="languages-label" 
+                                    value={languages} 
+                                    onChange={(e) => setLanguages(e.target.value)} 
+                                    label="Select Languages"
+                                    disabled={isLoading || role.toLowerCase() === 'developer'}
+                                    startAdornment={<InputAdornment position="start"><LanguageIcon color="action" /></InputAdornment>}
+                                >
+                                    {languageOptions.map((lang) => (
+                                        <MenuItem key={lang} value={lang}>
+                                            {lang}
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            )}
+                            
+                            {role.toLowerCase() === 'admin' && (
+                                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, fontStyle: 'italic' }}>
+                                    💡 You can choose multiple languages using checkboxes
+                                </Typography>
+                            )}
+                            {role.toLowerCase() !== 'admin' && role.toLowerCase() !== 'developer' && (
+                                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                                    Select your preferred language
+                                </Typography>
+                            )}
+                            {role.toLowerCase() === 'developer' && (
+                                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                                    Languages not required for developer role
+                                </Typography>
+                            )}
                         </FormControl>
 
                         <FormControl fullWidth margin="normal" required sx={{ mb: 2 }}>
@@ -199,12 +295,16 @@ export default function Register() {
                             <Select 
                                 labelId="role-label" 
                                 value={role} 
-                                onChange={(e) => setRole(e.target.value)} 
+                                onChange={handleRoleChange} // Use the updated handler
                                 label="Role" 
                                 startAdornment={<InputAdornment position="start"><GroupIcon color="action" /></InputAdornment>}
                                 disabled={isLoading}
                             >
-                                {roleOptions.map((option) => (<MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>))}
+                                {roleOptions.map((option) => (
+                                    <MenuItem key={option.value} value={option.value}>
+                                        {option.label}
+                                    </MenuItem>
+                                ))}
                             </Select>
                         </FormControl>
                         
@@ -218,11 +318,17 @@ export default function Register() {
                                 disabled={isLoading || role.toLowerCase() === 'developer'}
                                 startAdornment={<InputAdornment position="start"><BusinessIcon color="action" /></InputAdornment>}
                             >
-                                {organizationOptions.map((org) => (<MenuItem key={org} value={org}>{org}</MenuItem>))}
+                                {organizationOptions.map((org) => (
+                                    <MenuItem key={org} value={org}>{org}</MenuItem>
+                                ))}
                             </Select>
                         </FormControl>
 
-                        {error && (<Typography color="error" variant="body2" sx={{ mt: 1, mb: 2 }}>{error}</Typography>)}
+                        {error && (
+                            <Typography color="error" variant="body2" sx={{ mt: 1, mb: 2 }}>
+                                {error}
+                            </Typography>
+                        )}
 
                         <Button 
                             type="submit" 
@@ -231,26 +337,28 @@ export default function Register() {
                             size="large" 
                             color="secondary" 
                             sx={{ mt: 3, mb: 2, py: 1.5, fontWeight: 'bold', letterSpacing: 1 }} 
-                            onClick={handleRegister}
                             disabled={isLoading}
                         >
                             {isLoading ? <CircularProgress size={24} color="inherit" /> : 'CREATE ACCOUNT'}
                         </Button>
                         
                         <Typography align="center" variant="body2" color="text.secondary">
-                            Already have an account?{' '}<MuiLink component={Link} to="/login" underline="hover">Sign In</MuiLink>
+                            Already have an account?{' '}
+                            <MuiLink component={Link} to="/login" underline="hover">Sign In</MuiLink>
                         </Typography>
                     </Box>
                 </Paper>
             </Container>
 
-            {/* --- FOOTER (UPDATED) --- */}
+            {/* --- FOOTER --- */}
             <Box component="footer" sx={{ py: 3, px: 2, mt: 'auto', backgroundColor: theme.palette.grey[200], width: '100%', borderTop: `1px solid ${theme.palette.divider}` }}>
                 <Container maxWidth="lg" sx={{ display: 'flex', justifyContent: 'center', gap: 4 }}>
                     <MuiLink component="a" href="#" onClick={handleOpenContactDialog} color="inherit" underline="hover" variant="body2">
-                        Contact Us {/* <--- ATTACHED HANDLER */}
+                        Contact Us
                     </MuiLink>
-                    <MuiLink  component="a" href="#" onClick={handleOpenTermsDialog} color="inherit" underline="hover" variant="body2">Terms & Conditions</MuiLink>
+                    <MuiLink component="a" href="#" onClick={handleOpenTermsDialog} color="inherit" underline="hover" variant="body2">
+                        Terms & Conditions
+                    </MuiLink>
                 </Container>
             </Box>
 
@@ -260,11 +368,44 @@ export default function Register() {
                 onClose={handleCloseContactDialog} 
             /> 
 
-             <TermsDialog 
-                            open={isTermsDialogOpen}
-                            onClose={() => handleCloseTermsDialog(false)}
-                        />
+            {/* --- TERMS DIALOG --- */}
+            <TermsDialog 
+                open={isTermsDialogOpen}
+                onClose={handleCloseTermsDialog}
+            />
 
+            {/* --- SUCCESS/ERROR POPUP DIALOG --- */}
+            <Dialog
+                open={popupOpen}
+                onClose={handleClosePopup}
+                aria-labelledby="alert-dialog-title"
+                aria-describedby="alert-dialog-description"
+            >
+                <DialogTitle 
+                    id="alert-dialog-title"
+                    sx={{ 
+                        color: popupType === 'success' ? 'success.main' : 'error.main',
+                        fontWeight: 'bold'
+                    }}
+                >
+                    {popupTitle}
+                </DialogTitle>
+                <DialogContent>
+                    <DialogContentText id="alert-dialog-description">
+                        {popupMessage}
+                    </DialogContentText>
+                </DialogContent>
+                <DialogActions>
+                    <Button 
+                        onClick={handleClosePopup} 
+                        autoFocus
+                        color={popupType === 'success' ? 'success' : 'error'}
+                        variant="contained"
+                    >
+                        OK
+                    </Button>
+                </DialogActions>
+            </Dialog>
         </Box>
     );
 }

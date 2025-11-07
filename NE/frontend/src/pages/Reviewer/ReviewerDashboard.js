@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
     Container, Box, Typography, Card, CardContent, Grid, CircularProgress, Alert, Button, Chip,
     List, ListItem, Divider, useTheme,
@@ -54,22 +54,58 @@ const fetchPendingSentencesAPI = async () => {
     }
 };
 
-// --- DIALOG COMPONENTS (Defined outside main function) ---
-const ReviewDialog = ({ open, onClose, sentence, onApprove, onReject, reviewerUsername }) => {
-    const [comment, setComment] = useState('');
+const ReviewDialog = ({ open, onClose, sentence, reviewerUsername, fetchDashboardData, theme }) => {
+    const handleTagApprove = async (tagId, reviewer) => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/reviewer/tag/${tagId}/approve`, {
+                method: 'PUT',
+                headers: getAuthHeaders(),
+                body: JSON.stringify({
+                    reviewer_username: reviewer
+                }),
+            });
 
-    const handleApprove = () => { 
-        onApprove(sentence.id, comment, reviewerUsername); 
-        onClose(); 
-    };
-    
-    const handleReject = () => { 
-        if (!comment.trim()) { 
-            alert("Comment is required for rejection."); 
-            return; 
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to approve tag');
+            }
+
+            // Success: Refresh the data and close dialog
+            await fetchDashboardData();
+            alert('Tag approved successfully!');
+            onClose(); // ADD THIS LINE TO CLOSE THE DIALOG
+            
+        } catch (err) {
+            console.error('Error during tag approval:', err);
+            alert(`Tag Approval Failed: ${err.message}`);
         }
-        onReject(sentence.id, comment, reviewerUsername); 
-        onClose(); 
+    };
+
+    const handleTagReject = async (tagId, comment, reviewer) => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/reviewer/tag/${tagId}/reject`, {
+                method: 'PUT',
+                headers: getAuthHeaders(),
+                body: JSON.stringify({
+                    reviewer_username: reviewer,
+                    comments: comment
+                }),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to reject tag');
+            }
+
+            // Success: Refresh the data and close dialog
+            await fetchDashboardData();
+            alert('Tag rejected successfully!');
+            onClose(); // ADD THIS LINE TO CLOSE THE DIALOG
+            
+        } catch (err) {
+            console.error('Error during tag rejection:', err);
+            alert(`Tag Rejection Failed: ${err.message}`);
+        }
     };
 
     return (
@@ -83,69 +119,110 @@ const ReviewDialog = ({ open, onClose, sentence, onApprove, onReject, reviewerUs
                     Sentence: <span style={{ fontWeight: 'normal', fontStyle: 'italic' }}>{sentence?.sentence_text || 'Loading...'}</span>
                 </Typography>
 
-                {/* Tags Preview */}
+                {/* Individual Tags with Approve/Reject Buttons */}
                 {sentence?.tags && sentence.tags.length > 0 && (
                     <Box sx={{ mb: 3 }}>
-                        <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 1 }}>
-                            Identified Tags ({sentence.tags.length}):
+                        <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 2 }}>
+                            Individual Tag Review ({sentence.tags.length} tags):
                         </Typography>
-                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                             {sentence.tags.map((tag, index) => (
-                                <Chip 
-                                    key={tag._id || index}
-                                    label={`${tag.text} (${tag.tag})`}
-                                    size="small"
-                                    variant="outlined"
-                                    sx={{
-                                        borderColor: 
+                                <Card 
+                                    key={tag._id || index} 
+                                    variant="outlined" 
+                                    sx={{ 
+                                        p: 2,
+                                        borderLeft: `4px solid ${
                                             tag.review_status === 'Approved' ? '#4CAF50' : 
                                             tag.review_status === 'Rejected' ? '#F44336' : 
-                                            '#FF9800',
-                                        color: 
-                                            tag.review_status === 'Approved' ? '#4CAF50' : 
-                                            tag.review_status === 'Rejected' ? '#F44336' : 
-                                            '#FF9800',
-                                        fontWeight: 'bold'
+                                            '#FF9800'
+                                        }`
                                     }}
-                                />
+                                >
+                                    <Grid container spacing={2} alignItems="center">
+                                        <Grid item xs={12} sm={6}>
+                                            <Typography variant="body2" fontWeight="bold">
+                                                Phrase: <span style={{ fontWeight: 'normal' }}>"{tag.text}"</span>
+                                            </Typography>
+                                            <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
+                                                <Typography variant="body2" fontWeight="bold" sx={{ mr: 1 }}>
+                                                    Type:
+                                                </Typography>
+                                                <Chip 
+                                                    label={tag.tag} 
+                                                    size="small" 
+                                                    sx={{ 
+                                                        bgcolor: '#1976d2',
+                                                        color: 'white',
+                                                        fontWeight: 'bold'
+                                                    }}
+                                                />
+                                            </Box>
+                                            <Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 1 }}>
+                                                Annotator: {tag.username}
+                                            </Typography>
+                                            <Typography variant="caption" display="block" color="text.secondary">
+                                                Status: 
+                                                <Chip 
+                                                    label={tag.review_status || 'Pending'} 
+                                                    size="small"
+                                                    sx={{ 
+                                                        ml: 1,
+                                                        bgcolor: 
+                                                            tag.review_status === 'Approved' ? '#4CAF50' : 
+                                                            tag.review_status === 'Rejected' ? '#F44336' : 
+                                                            '#FF9800',
+                                                        color: 'white',
+                                                        fontSize: '0.7rem'
+                                                    }}
+                                                />
+                                            </Typography>
+                                        </Grid>
+                                        <Grid item xs={12} sm={6}>
+                                            <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
+                                                {tag.review_status !== 'Approved' && (
+                                                    <Button 
+                                                        variant="contained" 
+                                                        size="small"
+                                                        color="success" 
+                                                        onClick={() => handleTagApprove(tag._id, reviewerUsername)}
+                                                        sx={{ bgcolor: '#4CAF50' }} 
+                                                        startIcon={<CheckCircleIcon />}
+                                                    >
+                                                        Approve Tag
+                                                    </Button>
+                                                )}
+                                                {tag.review_status !== 'Rejected' && (
+                                                    <Button 
+                                                        variant="contained" 
+                                                        size="small"
+                                                        color="error" 
+                                                        onClick={() => {
+                                                            const comment = prompt("Please enter rejection reason for this tag:");
+                                                            if (comment !== null) {
+                                                                handleTagReject(tag._id, comment, reviewerUsername);
+                                                            }
+                                                        }}
+                                                        sx={{ bgcolor: '#F44336' }} 
+                                                        startIcon={<CancelIcon />}
+                                                    >
+                                                        Reject Tag
+                                                    </Button>
+                                                )}
+                                            </Box>
+                                        </Grid>
+                                    </Grid>
+                                </Card>
                             ))}
                         </Box>
                     </Box>
                 )}
 
-                {/* Review Comment */}
-                <TextField 
-                    autoFocus 
-                    margin="dense" 
-                    placeholder="Write your review comments here..." 
-                    fullWidth 
-                    multiline 
-                    rows={4} 
-                    variant="outlined" 
-                    value={comment} 
-                    onChange={(e) => setComment(e.target.value)} 
-                    sx={{ mb: 2 }} 
-                />
-                
-                <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, mt: 3 }}>
-                    <Button 
-                        variant="contained" 
-                        color="success" 
-                        onClick={handleApprove} 
-                        sx={{ bgcolor: '#4CAF50', px: 3 }} 
-                        startIcon={<CheckCircleIcon />}
-                    >
-                        Approve
-                    </Button>
-                    <Button 
-                        variant="contained" 
-                        color="error" 
-                        onClick={handleReject} 
-                        sx={{ bgcolor: '#F44336', px: 3 }} 
-                        startIcon={<CancelIcon />}
-                    >
-                        Reject
-                    </Button>
+                {/* Info message about individual tag review */}
+                <Box sx={{ mt: 3, p: 2, bgcolor: '#e3f2fd', borderRadius: 1 }}>
+                    <Typography variant="body2" color="primary" align="center">
+                        Review each tag individually. The sentence will automatically move out of the queue when all tags are reviewed.
+                    </Typography>
                 </Box>
             </DialogContent>
         </Dialog>
@@ -193,18 +270,20 @@ const ViewDetailsDialog = ({ open, onClose, details }) => {
                                             <Typography variant="body2" fontWeight="bold">
                                                 Phrase: <span style={{ fontWeight: 'normal' }}>"{tag.text}"</span>
                                             </Typography>
-                                            <Typography variant="body2" fontWeight="bold">
-                                                Type: <Chip 
+                                            <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}>
+                                                <Typography variant="body2" fontWeight="bold" sx={{ mr: 1 }}>
+                                                    Type:
+                                                </Typography>
+                                                <Chip 
                                                     label={tag.tag} 
                                                     size="small" 
                                                     sx={{ 
                                                         bgcolor: theme.palette.primary.main, 
                                                         color: 'white',
-                                                        fontWeight: 'bold',
-                                                        ml: 1
+                                                        fontWeight: 'bold'
                                                     }}
                                                 />
-                                            </Typography>
+                                            </Box>
                                         </Grid>
                                         <Grid item xs={12} sm={6}>
                                             <Typography variant="caption" display="block" color="text.secondary">
@@ -257,25 +336,27 @@ const ViewDetailsDialog = ({ open, onClose, details }) => {
     );
 };
 
+
 // ----------------------------------------------------------------------
 // --- REVIEWER DASHBOARD MAIN COMPONENT ---
 // ----------------------------------------------------------------------
 
 export default function ReviewerDashboard() {
     const navigate = useNavigate();
+    const { username } = useParams();
     const reviewerUsername = getReviewerUsername();
     const theme = useTheme(); 
     
     // --- State ---
     const [reviewerStats, setReviewerStats] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState('');
     const [pendingSentences, setPendingSentences] = useState([]); // Live queue data
     
     // Dialog States
     const [isReviewDialogOpen, setIsReviewDialogOpen] = useState(false);
     const [isViewDetailsDialogOpen, setIsViewDetailsDialogOpen] = useState(false);
     const [currentReviewItem, setCurrentReviewItem] = useState(null);
+    const [openFeedbackDialog, setOpenFeedbackDialog] = useState(false);
     
     // UPDATE THESE STATE VARIABLES FOR FOOTER DIALOGS
     const [isContactUsOpen, setIsContactUsOpen] = useState(false);
@@ -285,7 +366,6 @@ export default function ReviewerDashboard() {
     // --- Data Fetching Logic (UPDATED) ---
     const fetchDashboardData = useCallback(async () => {
         setLoading(true);
-        setError('');
         
         try {
             // 1. Fetch live pending sentences
@@ -307,7 +387,6 @@ export default function ReviewerDashboard() {
 
         } catch (err) {
             console.error("Reviewer Dashboard Error:", err);
-            setError('Failed to load dashboard data. Check network and API status.');
         } finally {
             setLoading(false);
         }
@@ -320,43 +399,7 @@ export default function ReviewerDashboard() {
         return () => clearInterval(interval);
     }, [fetchDashboardData]); 
     
-    // --- API Action Handlers ---
-
-    const handleReviewAction = async (sentenceId, action, comment, reviewer) => {
-        try {
-            const response = await fetch(`${API_BASE_URL}/api/sentence/review_action`, {
-                method: 'POST',
-                headers: getAuthHeaders(),
-                body: JSON.stringify({
-                    sentence_id: sentenceId,
-                    action: action,
-                    review_comment: comment,
-                    reviewer_username: reviewer
-                }),
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || `Failed to ${action.toLowerCase()}`);
-            }
-
-            // Success: Remove item locally and refresh stats
-            setPendingSentences(prev => prev.filter(s => s.id !== sentenceId));
-            fetchDashboardData(); 
-            
-        } catch (err) {
-            console.error(`Error during review action (${action}):`, err);
-            alert(`Review Failed: ${err.message}`);
-        }
-    };
-
-    const handleApprove = (sentenceId, comment, reviewer) => {
-        handleReviewAction(sentenceId, 'Approve', comment, reviewer);
-    };
-
-    const handleReject = (sentenceId, comment, reviewer) => {
-        handleReviewAction(sentenceId, 'Reject', comment, reviewer);
-    };
+  
     
     const handleReviewClick = (sentence) => {
         setCurrentReviewItem(sentence);
@@ -382,6 +425,9 @@ export default function ReviewerDashboard() {
     const handleFeedback = () => {
         setIsFeedbackOpen(true);
     };
+
+    const handleOpenFeedbackDialog = () => setOpenFeedbackDialog(true);
+    const handleCloseFeedbackDialog = () => setOpenFeedbackDialog(false);
 
     const handleTerms = () => {
         setIsTermsOpen(true); // UPDATE THIS TO OPEN TERMS DIALOG
@@ -570,22 +616,21 @@ export default function ReviewerDashboard() {
                 flexShrink: 0
             }}>
                 <Button size="small" sx={{ mr: 2 }} onClick={handleContactUs}>CONTACT US</Button>
-                <Button size="small" sx={{ mr: 2 }} onClick={handleFeedback}>FEEDBACK</Button>
+                <Button size="small" sx={{ mr: 2 }} onClick={handleOpenFeedbackDialog}>FEEDBACK</Button>
                 <Button size="small" onClick={handleTerms}>TERMS</Button>
                 <Typography variant="caption" display="block" sx={{ mt: 1 }}>
                     © 2025 MWE Annotation Platform. All rights reserved.
                 </Typography>
             </Box>
 
-            {/* DIALOGS */}
             {currentReviewItem && (
                 <ReviewDialog
                     open={isReviewDialogOpen}
                     onClose={() => setIsReviewDialogOpen(false)}
                     sentence={currentReviewItem}
-                    onApprove={handleApprove}
-                    onReject={handleReject}
                     reviewerUsername={reviewerUsername}
+                    fetchDashboardData={fetchDashboardData}
+                    theme={theme}
                 />
             )}
             
@@ -604,8 +649,9 @@ export default function ReviewerDashboard() {
             />
             
             <FeedbackDialog
-                open={isFeedbackOpen}
-                onClose={() => setIsFeedbackOpen(false)}
+                open={openFeedbackDialog}
+                onClose={handleCloseFeedbackDialog}
+                userEmail={username} 
             />
             
             <TermsDialog

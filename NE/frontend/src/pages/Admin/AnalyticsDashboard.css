@@ -297,6 +297,35 @@
   letter-spacing: -0.02em;
 }
 
+.stat-card .MuiCardContent-root .MuiTypography-h3,
+.stat-card .MuiCardContent-root .MuiTypography-h4 {
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 800;
+  font-size: var(--font-size-4xl);
+  line-height: 1;
+  margin-bottom: var(--spacing-sm);
+  letter-spacing: -0.02em;
+  color: var(--primary) !important; /* Fallback color */
+}
+
+.stat-card .MuiCardContent-root .MuiTypography-body2 {
+  color: var(--gray-600) !important;
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--spacing-xs);
+}
+
+.stat-card .MuiCardContent-root .MuiTypography-caption {
+  color: var(--gray-500) !important;
+  font-weight: 500;
+  font-size: var(--font-size-xs);
+}
+
 .stat-card .MuiTypography-body2 {
   color: var(--gray-600);
   font-weight: 600;

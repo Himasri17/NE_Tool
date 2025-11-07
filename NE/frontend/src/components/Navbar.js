@@ -10,8 +10,8 @@ import GroupAddIcon from '@mui/icons-material/GroupAdd';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import BookIcon from '@mui/icons-material/Book';
+import { getToken, removeToken, getUsername } from './authUtils'; // Import auth utilities
 
-// Component props interface based on what AdminDashboard passes
 export default function Navbar({
     username = '',
     pendingUsersCount = 0,
@@ -24,29 +24,37 @@ export default function Navbar({
     const theme = useTheme();
     
     const [drawerOpen, setDrawerOpen] = useState(false);
+    const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+    // Check if current page is admin dashboard
+    const isAdminDashboard = location.pathname.startsWith(`/admin/${username}`) && 
+                            !location.pathname.includes('/analytics') &&
+                            !location.pathname.includes('/approvals') &&
+                            !location.pathname.includes('/logbook');
 
     // 1. --- CALCULATE AGGREGATED COUNTS ---
     const unreviewedFeedbacksCount = feedbacks.filter(f => !f.is_reviewed).length;
-    // Total count for the main hamburger badge
-    const totalNotificationCount = pendingUsersCount + unreviewedFeedbacksCount;
+    // Total count for the main hamburger badge - only include feedback count if on admin dashboard
+    const totalNotificationCount = pendingUsersCount + (isAdminDashboard ? unreviewedFeedbacksCount : 0);
 
     // 2. Define all navigation items, paths, and icons 
     const navItems = [
         { name: 'DASHBOARD', path: `/admin/${username}`, icon: DashboardIcon, badge: 0 }, 
         { name: 'ANALYTICS', path: `/admin/${username}/analytics`, icon: AnalyticsIcon, badge: 0 },
-        { 
+        // Only show FEEDBACKS item on admin dashboard
+        ...(isAdminDashboard ? [{
             name: 'FEEDBACKS', 
             path: null, 
             action: onOpenFeedbackDialog, 
-            badge: unreviewedFeedbacksCount, // Count for the sidebar item
+            badge: unreviewedFeedbacksCount,
             icon: FeedbackIcon 
-        },
+        }] : []),
         { name: 'LOGBOOK', path: `/admin/${username}/logbook`, icon: BookIcon, badge: 0 },
         { 
             name: 'APPROVE USERS', 
             path: `/admin/${username}/approvals`, 
             icon: GroupAddIcon,
-            badge: pendingUsersCount, // Count for the sidebar item
+            badge: pendingUsersCount,
         },
     ];
     
@@ -68,10 +76,79 @@ export default function Navbar({
         }
     };
     
-    const handleLogout = () => {
-        // Since AdminDashboard calls removeToken() before redirecting, this simply navigates
-        navigate('/login');
+    const handleLogout = async () => {
+        if (isLoggingOut) return; // Prevent multiple clicks
+        
+        setIsLoggingOut(true);
+        
+        try {
+            const token = getToken();
+            const currentUsername = username || getUsername();
+            
+            if (token && currentUsername) {
+                // Call backend logout endpoint to log the activity
+                const response = await fetch('http://127.0.0.1:5001/logout', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        username: currentUsername
+                    })
+                });
+
+                if (response.ok) {
+                    console.log('Backend logout successful');
+                } else {
+                    console.warn('Backend logout failed, but continuing with client-side logout');
+                }
+            }
+
+            // Always clear client-side storage and redirect
+            removeToken();
+            localStorage.removeItem('username');
+            localStorage.removeItem('userRole');
+            
+            console.log('Client-side logout completed');
+            
+            // Navigate to login page
+            navigate('/login');
+            
+        } catch (error) {
+            console.error('Error during logout:', error);
+            // Still clear local storage and redirect even if API call fails
+            removeToken();
+            localStorage.removeItem('username');
+            localStorage.removeItem('userRole');
+            navigate('/login');
+        } finally {
+            setIsLoggingOut(false);
+        }
     };
+
+    // Add beforeunload event listener to catch browser/tab closes
+    React.useEffect(() => {
+        const handleBeforeUnload = async (event) => {
+            const token = getToken();
+            const currentUsername = username || getUsername();
+            
+            if (token && currentUsername) {
+                // Use sendBeacon for reliable logout on page unload
+                const blob = new Blob([JSON.stringify({
+                    username: currentUsername
+                })], { type: 'application/json' });
+                
+                navigator.sendBeacon('http://127.0.0.1:5001/logout', blob);
+            }
+        };
+
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        
+        return () => {
+            window.removeEventListener('beforeunload', handleBeforeUnload);
+        };
+    }, [username]);
 
     return (
         <Box sx={{ 
@@ -107,7 +184,7 @@ export default function Navbar({
                     </Badge>
                 </IconButton>
                 <Typography variant="h6" fontWeight={500}>
-                    Named Entity  Workbench
+                    Multiword Expression Workbench
                 </Typography>
             </Box>
             
@@ -119,10 +196,15 @@ export default function Navbar({
                 <Button 
                     variant="outlined" 
                     size="small" 
-                    sx={{ color: 'white', borderColor: 'white' }} 
+                    sx={{ 
+                        color: 'white', 
+                        borderColor: 'white',
+                        opacity: isLoggingOut ? 0.7 : 1 
+                    }} 
                     onClick={handleLogout}
+                    disabled={isLoggingOut}
                 >
-                    LOG OUT
+                    {isLoggingOut ? 'LOGGING OUT...' : 'LOG OUT'}
                 </Button>
             </Box>
 

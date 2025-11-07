@@ -7,7 +7,7 @@ from flask_cors import CORS
 from flask_mail import Mail, Message
 from bson import ObjectId
 from pymongo import MongoClient
-import bcrypt 
+import bcrypt
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import PyPDF2
@@ -40,7 +40,7 @@ app.config['JWT_EXPIRATION_HOURS'] = 24
 
 # --- MongoDB Connection ---
 client = MongoClient("mongodb://localhost:27017/")
-db = client["NER_Tool"]
+db = client["MWE_TOOL"]
 
 # --- Mail Configuration ---
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'  
@@ -110,27 +110,37 @@ def generate_jwt_token(username, role):
         print(f"Error generating JWT token: {e}")
         return None
 
-def verify_jwt_token(token):
-    """Verify JWT token and return payload if valid"""
+def verify_jwt_token(token, allow_expired=False):
+    """
+    Verify a JWT token. Optionally allow slightly expired tokens (for refresh).
+    """
     try:
-        payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=[app.config['JWT_ALGORITHM']])
-        
-        # Additional check: verify user still exists and has same role
-        user = users_collection.find_one({"username": payload.get('username')})
-        if not user:
-            return None  # User no longer exists
-            
-        # Optional: Verify role hasn't changed
-        if user.get('role') != payload.get('role'):
-            # Role changed, token is outdated
-            return None
-            
+        payload = jwt.decode(
+            token,
+            app.config['SECRET_KEY'],
+            algorithms=['HS256']
+        )
         return payload
     except jwt.ExpiredSignatureError:
-        return None  # Token has expired
-    except jwt.InvalidTokenError:
-        return None  # Invalid token
-
+        if allow_expired:
+            try:
+                # Decode without verifying expiration
+                payload = jwt.decode(
+                    token,
+                    app.config['SECRET_KEY'],
+                    algorithms=['HS256'],
+                    options={"verify_exp": False}
+                )
+                print("[verify_jwt_token] Allowing expired token for refresh.")
+                return payload
+            except Exception as e:
+                print(f"[verify_jwt_token] Error decoding expired token: {e}")
+                return None
+        return None
+    except jwt.InvalidTokenError as e:
+        print(f"[verify_jwt_token] Invalid token: {e}")
+        return None
+    
 def token_required(f):
     """Decorator to protect routes that require JWT authentication"""
     @wraps(f)
@@ -214,6 +224,7 @@ def developer_required(f):
         return f(*args, **kwargs)
     
     return decorated
+
 
 @app.route('/feedback_uploads/<filename>')
 def serve_feedback_image(filename):
@@ -420,6 +431,92 @@ def update_session_history_report(username_to_update):
         upsert=True
     )
     print(f"User session history for '{username_to_update}' has been updated with {len(sorted_sessions)} sessions.")
+
+
+def send_developer_notification(new_user_data, approval_target):
+    """Sends an email to a system owner or existing developer about a pending Admin/Developer registration."""
+    
+    # 1. Find existing Approved Developer email(s) for notification
+    # This ensures only currently approved developers get the approval request.
+    developer_emails = [
+        user['email'] for user in users_collection.find({"role": "developer", "is_approved": True})
+    ]
+    
+    # Fallback/Default Recipient if no approved developers exist (e.g., system owner)
+    if not developer_emails:
+        print("ALERT: No approved developers found. Sending notification to default system email.")
+        developer_emails.append(app.config['MAIL_USERNAME']) # Sends to the mail sender address
+
+    try:
+        msg = Message(
+            subject=f"ACTION REQUIRED: New {new_user_data['role'].upper()} Registration - {new_user_data['full_name']}",
+            sender=app.config['MAIL_USERNAME'],
+            recipients=developer_emails
+        )
+        
+        msg.body = f"""
+Dear System Owner/Developer,
+
+A new user with the role '{new_user_data['role'].upper()}' has registered and requires your approval:
+
+User Details:
+- Role: {new_user_data['role'].upper()}
+- Full Name: {new_user_data['full_name']}
+- Email: {new_user_data['email']}
+- Organization: {new_user_data['organization']}
+- Registration Date: {get_ist_time().strftime('%Y-%m-%d %H:%M:%S IST')}
+
+This user cannot log in until you approve their account via the Developer Dashboard.
+
+Best regards,
+Sentence Annotation System
+"""
+        mail.send(msg)
+        print(f"Developer notification sent to: {developer_emails}")
+        
+    except Exception as e:
+        print(f"Failed to send developer notification: {e}")
+        # Log the detailed exception for debugging
+        import traceback
+        traceback.print_exc()
+
+def send_org_admin_notification(user_data):
+    """Placeholder to notify Org Admins about a pending Annotator/Reviewer registration."""
+    print(f"NOTIFICATION: New {user_data.get('role')} registered ({user_data.get('email')}). Requires Org Admin approval.")
+    # Add actual email/notification logic here
+
+def send_developer_welcome_email(user_data):
+    """Sends a welcome email to a newly auto-approved developer user."""
+    try:
+        msg = Message(
+            subject="Welcome to System - Developer Account Activated",
+            sender=app.config['MAIL_USERNAME'],
+            recipients=[user_data['email']]
+        )
+        
+        msg.body = f"""
+Dear {user_data['full_name']},
+
+Your Developer account has been automatically approved and activated.
+
+You can now log in to the system immediately using your credentials. As a Developer, you have system-level access to management and reporting tools.
+
+Access the system at: [Your System URL]
+
+Best regards,
+System Team
+"""
+        mail.send(msg)
+        print(f"Welcome email sent to new developer: {user_data['email']}")
+        
+    except Exception as e:
+        print(f"Failed to send developer welcome email: {e}")
+
+def log_action_and_update_report(actor, message):
+    """Placeholder for logging system activities."""
+    print(f"LOG: [{actor}] {message}")
+
+
 
 def log_action_and_update_report(username, description):
     """Logs a new raw event and triggers a rebuild of that user's session history report. (UNCHANGED)"""
@@ -714,28 +811,45 @@ def update_sentence_review_status(sentence_id):
         current_status = sentence.get('review_status', 'Pending')
         annotator_username = sentence.get('username')
         
-        # Determine is_annotated based on the existence of any tags
-        is_annotated = (remaining_staged_tags > 0) or (approved_tags_count > 0) or (rejected_tags_count > 0) or sentence.get('is_annotated', False)
+        # Calculate total reviewed tags
+        total_reviewed_tags = approved_tags_count + rejected_tags_count
+        total_tags = remaining_staged_tags + total_reviewed_tags
         
-        # ENHANCED: Determine the correct status for mixed scenarios
-        if remaining_staged_tags > 0:
-            # Some tags still pending review
-            new_status = "Pending"
-        elif approved_tags_count > 0 and rejected_tags_count == 0:
-            # All tags approved, none rejected
-            new_status = "Approved"
-        elif approved_tags_count == 0 and rejected_tags_count > 0:
-            # All tags rejected, none approved
-            new_status = "Rejected"
-        elif approved_tags_count > 0 and rejected_tags_count > 0:
-            # MIXED STATUS: Some approved, some rejected
-            new_status = "Partially Approved"
-        else:
-            # No tags at all
-            if is_annotated:
-                new_status = "Rejected"
+        # ENHANCED: Determine is_annotated based on the existence of APPROVED tags only
+        # If all tags are rejected and there are no approved tags, the sentence should be un-annotated
+        has_approved_tags = approved_tags_count > 0
+        has_pending_tags = remaining_staged_tags > 0
+        
+        # Sentence is only considered annotated if it has approved tags OR pending tags awaiting review
+        is_annotated = has_approved_tags or has_pending_tags
+        
+        # FIXED: Enhanced status determination
+        if total_tags == 0:
+            # No tags at all - if it was in review, it should be completed
+            if current_status == "PENDING_REVIEW":
+                new_status = "REVIEWED_REJECTED"  # No annotations provided
+                is_annotated = False
             else:
                 new_status = "Pending"
+                is_annotated = False
+                
+        elif remaining_staged_tags > 0:
+            # Some tags still pending review - keep in PENDING_REVIEW status
+            new_status = "PENDING_REVIEW"
+        elif approved_tags_count > 0 and rejected_tags_count == 0:
+            # All tags approved, none rejected
+            new_status = "REVIEWED_APPROVED"
+        elif approved_tags_count == 0 and rejected_tags_count > 0:
+            # All tags rejected, none approved
+            new_status = "REVIEWED_REJECTED"
+            is_annotated = False
+        elif approved_tags_count > 0 and rejected_tags_count > 0:
+            # Mixed status: Some approved, some rejected - ALL tags reviewed
+            new_status = "REVIEWED_APPROVED"  # Consider it approved with some rejections
+        else:
+            # Fallback
+            new_status = "Pending"
+            is_annotated = False
 
         # Update the sentence
         sentences_collection.update_one(
@@ -751,11 +865,10 @@ def update_sentence_review_status(sentence_id):
             status_change_msg = f"Sentence status changed from '{current_status}' to '{new_status}'"
             log_action_and_update_report(annotator_username, status_change_msg)
         
-        print(f"Updated sentence {sentence_id} status: {new_status} (approved: {approved_tags_count}, rejected: {rejected_tags_count}, pending: {remaining_staged_tags})")
+        print(f"Updated sentence {sentence_id} status: {new_status} (approved: {approved_tags_count}, rejected: {rejected_tags_count}, pending: {remaining_staged_tags}, is_annotated: {is_annotated})")
         
     except Exception as e:
-        print(f"Error updating sentence status: {e}")
-        
+        print(f"Error updating sentence status: {e}")                  
 # --- API Routes ---
 
 @app.route("/api/log-action", methods=["POST"])
@@ -776,93 +889,6 @@ def log_user_action():
     except Exception as e:
         print(f"Error logging action: {e}")
         return jsonify({"error": "Internal server error"}), 500
-    
-
-def send_developer_notification(new_user_data, approval_target):
-    """Sends an email to a system owner or existing developer about a pending Admin/Developer registration."""
-    
-    # 1. Find existing Approved Developer email(s) for notification
-    # This ensures only currently approved developers get the approval request.
-    developer_emails = [
-        user['email'] for user in users_collection.find({"role": "developer", "is_approved": True})
-    ]
-    
-    # Fallback/Default Recipient if no approved developers exist (e.g., system owner)
-    if not developer_emails:
-        print("ALERT: No approved developers found. Sending notification to default system email.")
-        developer_emails.append(app.config['MAIL_USERNAME']) # Sends to the mail sender address
-
-    try:
-        msg = Message(
-            subject=f"ACTION REQUIRED: New {new_user_data['role'].upper()} Registration - {new_user_data['full_name']}",
-            sender=app.config['MAIL_USERNAME'],
-            recipients=developer_emails
-        )
-        
-        msg.body = f"""
-Dear System Owner/Developer,
-
-A new user with the role '{new_user_data['role'].upper()}' has registered and requires your approval:
-
-User Details:
-- Role: {new_user_data['role'].upper()}
-- Full Name: {new_user_data['full_name']}
-- Email: {new_user_data['email']}
-- Organization: {new_user_data['organization']}
-- Registration Date: {get_ist_time().strftime('%Y-%m-%d %H:%M:%S IST')}
-
-This user cannot log in until you approve their account via the Developer Dashboard.
-
-Best regards,
-Sentence Annotation System
-"""
-        mail.send(msg)
-        print(f"Developer notification sent to: {developer_emails}")
-        
-    except Exception as e:
-        print(f"Failed to send developer notification: {e}")
-        # Log the detailed exception for debugging
-        import traceback
-        traceback.print_exc()
-
-def send_org_admin_notification(user_data):
-    """Placeholder to notify Org Admins about a pending Annotator/Reviewer registration."""
-    print(f"NOTIFICATION: New {user_data.get('role')} registered ({user_data.get('email')}). Requires Org Admin approval.")
-    # Add actual email/notification logic here
-
-def send_developer_welcome_email(user_data):
-    """Sends a welcome email to a newly auto-approved developer user."""
-    try:
-        msg = Message(
-            subject="Welcome to System - Developer Account Activated",
-            sender=app.config['MAIL_USERNAME'],
-            recipients=[user_data['email']]
-        )
-        
-        msg.body = f"""
-Dear {user_data['full_name']},
-
-Your Developer account has been automatically approved and activated.
-
-You can now log in to the system immediately using your credentials. As a Developer, you have system-level access to management and reporting tools.
-
-Access the system at: [Your System URL]
-
-Best regards,
-System Team
-"""
-        mail.send(msg)
-        print(f"Welcome email sent to new developer: {user_data['email']}")
-        
-    except Exception as e:
-        print(f"Failed to send developer welcome email: {e}")
-
-def log_action_and_update_report(actor, message):
-    """Placeholder for logging system activities."""
-    print(f"LOG: [{actor}] {message}")
-
-
-
     
 @app.route("/register", methods=["POST"])
 def register():
@@ -891,8 +917,8 @@ def register():
     # 1. Developer Limit Check
     if is_developer: 
         developer_count = users_collection.count_documents({"role": "developer"})
-        if developer_count >= 2:
-            return jsonify({"message": "Maximum limit of 2 developers has been reached. Developer registration failed."}), 403
+        if developer_count >= 3:
+            return jsonify({"message": "Maximum limit of 3 developers has been reached. Developer registration failed."}), 403
             
         # 2. Auto-Approval for Developer role (up to the limit)
         is_approved = True
@@ -1094,7 +1120,7 @@ def submit_feedback():
 @app.route("/admin/feedbacks", methods=["GET"])
 @admin_required
 def get_all_feedbacks():
-    """Fetches all stored feedback for the admin dashboard. (UNCHANGED)"""
+    """Fetches all stored feedback for the admin dashboard."""
     try:
         feedbacks_cursor = feedback_collection.find().sort("time", -1) 
         
@@ -1103,9 +1129,9 @@ def get_all_feedbacks():
             feedback_data = {
                 "id": str(feedback["_id"]),
                 "email": feedback.get("email", "anonymous@example.com"),
-                "feedback": feedback.get("feedback_text", "[No text]"),
-                "file": feedback.get("file_path", "None"),
-                "time": feedback.get("time", get_ist_time()).strftime('%Y-%m-%d %H:%M:%S UTC'),
+                "feedback_text": feedback.get("feedback_text", "[No text]"),
+                "file_path": feedback.get("file_path", "None"),
+                "time": feedback.get("time", get_ist_time()).strftime('%Y-%m-%d %H:%M:%S IST'),
                 "is_reviewed": feedback.get("is_reviewed", False)
             }
             feedbacks_list.append(feedback_data)
@@ -1115,24 +1141,102 @@ def get_all_feedbacks():
     except Exception as e:
         print(f"Error fetching all feedbacks: {e}")
         return jsonify({"error": "Internal server error while fetching feedbacks"}), 500
-
+    
 @app.route("/admin/feedbacks/<feedback_id>/review", methods=["PUT"])
 @admin_required
 def mark_feedback_reviewed(feedback_id):
-    """Marks a specific feedback item as reviewed. (UNCHANGED)"""
+    """Marks a specific feedback item as reviewed and notifies developers."""
     try:
+        # First get the feedback before updating
+        feedback = feedback_collection.find_one({"_id": ObjectId(feedback_id)})
+        if not feedback:
+            return jsonify({"message": "Feedback not found."}), 404
+        
+        # Mark as reviewed
         result = feedback_collection.update_one(
             {"_id": ObjectId(feedback_id)},
             {"$set": {"is_reviewed": True}}
         )
+        
         if result.matched_count == 0:
             return jsonify({"message": "Feedback not found."}), 404
         
-        return jsonify({"message": "Feedback marked as reviewed successfully."}), 200
+        # Send notification to developers with the feedback content
+        send_feedback_to_developers(feedback)
+        
+        return jsonify({"message": "Feedback marked as reviewed successfully and developers notified."}), 200
     except Exception as e:
         print(f"Error marking feedback as reviewed: {e}")
         return jsonify({"error": "Internal server error."}), 500
 
+def send_feedback_to_developers(feedback_data):
+    """Sends feedback content to all developers when marked as reviewed"""
+    try:
+        # Get all developer emails
+        developer_emails = [
+            user['email'] for user in users_collection.find(
+                {"role": "developer", "is_approved": True}, 
+                {"email": 1}
+            )
+        ]
+        
+        if not developer_emails:
+            print("No developers found to send feedback notification")
+            return
+        
+        # Prepare feedback content
+        feedback_text = feedback_data.get('feedback_text', '[No text provided]')
+        user_email = feedback_data.get('email', 'anonymous@example.com')
+        feedback_time = feedback_data.get('time', get_ist_time())
+        
+        # Format time for display
+        if isinstance(feedback_time, datetime):
+            formatted_time = feedback_time.strftime('%Y-%m-%d %H:%M:%S IST')
+        else:
+            formatted_time = str(feedback_time)
+        
+        # Check if there's a file attachment
+        file_info = ""
+        file_path = feedback_data.get('file_path')
+        if file_path and file_path != "None":
+            file_info = f"\nAttachment: {file_path}"
+            # You could also include the file URL if needed
+            # file_url = f"{request.host_url}feedback_uploads/{file_path}"
+            # file_info = f"\nAttachment: {file_url}"
+        
+        # Create and send email
+        msg = Message(
+            subject=f"FEEDBACK REVIEWED: New User Feedback from {user_email}",
+            sender=app.config['MAIL_USERNAME'],
+            recipients=developer_emails
+        )
+        
+        msg.body = f"""
+Dear Developer,
+
+A user feedback has been reviewed by an admin and requires your attention:
+
+Feedback Details:
+- From: {user_email}
+- Submitted: {formatted_time}
+- Feedback Text: {feedback_text}
+{file_info}
+
+This feedback has been marked as reviewed in the system and is now available for your review.
+
+You can access the developer dashboard to view all feedback items.
+
+Best regards,
+Sentence Annotation System
+"""
+        mail.send(msg)
+        print(f"Feedback notification sent to developers: {developer_emails}")
+        
+    except Exception as e:
+        print(f"Failed to send feedback notification to developers: {e}")
+        # Log the detailed exception for debugging
+        import traceback
+        traceback.print_exc()
 
 # Add this route to your app.py
 @app.route("/admin/feedbacks/<feedback_id>", methods=["DELETE"])
@@ -1204,7 +1308,13 @@ def login():
     if not token:
         return jsonify({"message": "Failed to generate authentication token"}), 500
     
-    log_action_and_update_report(username_or_email, 'Login')
+    # ENHANCED LOGGING: Ensure login activity is properly logged
+    try:
+        log_action_and_update_report(username_or_email, 'Login')
+        print(f"DEBUG: Login activity logged for user: {username_or_email}")
+    except Exception as log_error:
+        print(f"WARNING: Failed to log login activity for {username_or_email}: {log_error}")
+        # Don't fail the login if logging fails
     
     return jsonify({
         "message": "Login successful", 
@@ -1213,31 +1323,40 @@ def login():
         "token": token, 
         "expires_in_hours": app.config['JWT_EXPIRATION_HOURS']
     })
-    
-     
+
 @app.route("/refresh-token", methods=["POST"])
 @token_required
 def refresh_token():
-    """Refresh JWT token"""
+    """Refresh JWT token safely even if the old one just expired."""
     try:
-        current_user = request.current_user
-        username = current_user.get('username')
-        role = current_user.get('role')
-        
-        # Generate new token
+        # Manually extract the token since @token_required blocks expired ones
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({"message": "Authorization header missing"}), 401
+
+        token = auth_header.split(' ')[1]
+        payload = verify_jwt_token(token, allow_expired=True)
+        if not payload:
+            return jsonify({"message": "Invalid or corrupted token"}), 401
+
+        username = payload.get('username')
+        role = payload.get('role')
+
+        # Generate a new token
         new_token = generate_jwt_token(username, role)
         if not new_token:
             return jsonify({"message": "Failed to generate new token"}), 500
-        
+
         return jsonify({
             "message": "Token refreshed successfully",
             "token": new_token,
-            "expires_in_hours": app.config['JWT_EXPIRATION_HOURS']
+            "expires_in_hours": app.config.get('JWT_EXPIRATION_HOURS', 1)
         }), 200
-        
+
     except Exception as e:
         print(f"Error refreshing token: {e}")
         return jsonify({"message": "Internal server error"}), 500
+
 
 # Add these imports at the top if not already present
 import random
@@ -1422,35 +1541,79 @@ Sentence Annotation System Team
     except Exception as e:
         print(f"Error resetting password: {e}")
         return jsonify({"error": "Internal server error"}), 500
-    
+
 
 # --- NEW DEVELOPER ROUTE FOR APPROVAL ---
 
-
-@app.route("/developer/feedback", methods=["GET"])
+@app.route("/developer/approve-user/<user_id>", methods=["POST"])
 @developer_required
-def get_developer_feedback():
-    """Fetches all submitted user feedback for developer view."""
+def developer_approve_user(user_id):
+    """Developer approves or rejects admin/developer registrations"""
     try:
-        feedbacks_cursor = feedback_collection.find().sort("time", -1) 
+        data = request.json
+        developer_username = data.get("approved_by")
+        action = data.get("action")  # 'approve' or 'reject'
+        rejection_reason = data.get("rejectionReason", "")
         
-        feedbacks_list = []
-        for feedback in feedbacks_cursor:
-            feedback_data = {
-                "id": str(feedback["_id"]),
-                "email": feedback.get("email", "anonymous@example.com"),
-                "feedback_text": feedback.get("feedback_text", "[No text]"),
-                "file_path": feedback.get("file_path", "None"),
-                "time": feedback.get("time", get_ist_time()).strftime('%Y-%m-%d %H:%M:%S IST'),
-                "is_reviewed": feedback.get("is_reviewed", False)
-            }
-            feedbacks_list.append(feedback_data)
+        if not developer_username:
+            return jsonify({"error": "Developer username is required"}), 400
         
-        return jsonify({"feedbacks": feedbacks_list}), 200
+        # Find the user to be approved/rejected
+        user_doc = users_collection.find_one({"_id": ObjectId(user_id)})
+        if not user_doc:
+            return jsonify({"message": "User not found."}), 404
         
+        IST = ZoneInfo("Asia/Kolkata")
+        
+        if action == 'approve':
+            # Approve the user
+            users_collection.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": {
+                    "is_approved": True,
+                    "approved_by": developer_username,
+                    "approved_at": datetime.now(IST),
+                    "is_rejected": False,
+                    "rejection_reason": None
+                }}
+            )
+            
+            # Send approval email
+            send_user_approval_email(user_doc, approved=True)
+            
+            log_action_and_update_report(developer_username, f'Approved {user_doc.get("role")} user: {user_doc.get("username")}')
+            
+            return jsonify({"message": f"User {user_doc.get('username', 'Unknown User')} successfully approved."}), 200
+            
+        elif action == 'reject':
+            if not rejection_reason.strip():
+                return jsonify({"error": "Rejection reason is required"}), 400
+            
+            # Reject the user
+            users_collection.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": {
+                    "is_rejected": True,
+                    "rejection_reason": rejection_reason,
+                    "rejected_by": developer_username,
+                    "rejected_at": datetime.now(IST),
+                    "is_approved": False
+                }}
+            )
+            
+            # Send rejection email
+            send_user_approval_email(user_doc, approved=False)
+            
+            log_action_and_update_report(developer_username, f'Rejected {user_doc.get("role")} user: {user_doc.get("username")}. Reason: {rejection_reason}')
+            
+            return jsonify({"message": f"User {user_doc.get('username', 'Unknown User')} successfully rejected."}), 200
+            
+        else:
+            return jsonify({"error": "Invalid action. Use 'approve' or 'reject'."}), 400
+            
     except Exception as e:
-        print(f"Error fetching feedback for developer: {e}")
-        return jsonify({"error": "Internal server error while fetching feedbacks"}), 500
+        print(f"Error in developer user approval: {e}")
+        return jsonify({"error": "Internal server error during user approval"}), 500
     
 @app.route("/developer/pending-users", methods=["GET"])
 @developer_required
@@ -1478,16 +1641,21 @@ def get_developer_pending_users():
         traceback.print_exc()
         return jsonify({"error": "Internal server error"}), 500
 
-@app.route("/developer/feedback", methods=["GET"])
+
+# --- DEVELOPER FEEDBACK MANAGEMENT ROUTES ---
+
+@app.route("/developer/feedbacks", methods=["GET"])
 @developer_required
-def get_developer_feedback():
-    """Fetches all submitted user feedback."""
+def get_developer_feedbacks():
+    """Fetches only REVIEWED feedback for developer dashboard."""
     try:
-        feedbacks_cursor = feedback_collection.find().sort("time", -1) 
+        # CRITICAL CHANGE: Only fetch feedback that has been reviewed by admin
+        feedbacks_cursor = feedback_collection.find({
+            "is_reviewed": True  # Only show reviewed feedback to developers
+        }).sort("time", -1) 
         
         feedbacks_list = []
         for feedback in feedbacks_cursor:
-            # FIX: Ensure field names match the FE viewer requirements (feedback_text, file_path)
             feedback_data = {
                 "id": str(feedback["_id"]),
                 "email": feedback.get("email", "anonymous@example.com"),
@@ -1503,9 +1671,63 @@ def get_developer_feedback():
     except Exception as e:
         print(f"Error fetching feedback for developer: {e}")
         return jsonify({"error": "Internal server error while fetching feedbacks"}), 500
+      
+@app.route("/developer/feedbacks/<feedback_id>/review", methods=["PUT"])
+@developer_required
+def mark_developer_feedback_reviewed(feedback_id):
+    """Marks a specific feedback item as reviewed by developer."""
+    try:
+        # Only allow marking reviewed feedback (already reviewed by admin)
+        feedback = feedback_collection.find_one({
+            "_id": ObjectId(feedback_id),
+            "is_reviewed": True
+        })
+        if not feedback:
+            return jsonify({"message": "Feedback not found or not reviewed by admin."}), 404
+            
+        result = feedback_collection.update_one(
+            {"_id": ObjectId(feedback_id)},
+            {"$set": {"is_reviewed": True}}  # This might be redundant but keep for consistency
+        )
+        
+        return jsonify({"message": "Feedback marked as reviewed successfully."}), 200
+    except Exception as e:
+        print(f"Error marking feedback as reviewed: {e}")
+        return jsonify({"error": "Internal server error."}), 500
 
-
+@app.route("/developer/feedbacks/<feedback_id>", methods=["DELETE"])
+@developer_required
+def delete_developer_feedback(feedback_id):
+    """Delete a specific feedback item (developer only)."""
+    try:
+        # Only allow deleting reviewed feedback
+        feedback = feedback_collection.find_one({
+            "_id": ObjectId(feedback_id),
+            "is_reviewed": True
+        })
+        if not feedback:
+            return jsonify({"message": "Feedback not found or not reviewed by admin."}), 404
+        
+        # Delete associated file if exists
+        file_path = feedback.get("file_path")
+        if file_path and file_path != "None":
+            try:
+                full_path = os.path.join(app.config['UPLOAD_FOLDER'], file_path)
+                if os.path.exists(full_path):
+                    os.remove(full_path)
+                    print(f"Deleted feedback file: {full_path}")
+            except Exception as file_error:
+                print(f"Error deleting feedback file: {file_error}")
+        
+        # Delete the feedback document
+        result = feedback_collection.delete_one({"_id": ObjectId(feedback_id)})
+        
+        return jsonify({"message": "Feedback deleted successfully."}), 200
+    except Exception as e:
+        print(f"Error deleting feedback: {e}")
+        return jsonify({"error": "Internal server error."}), 500
     
+
 # --- NEW ADMIN ROUTES FOR APPROVAL (UNCHANGED) ---
 
 @app.route("/admin/pending-users", methods=["GET"])
@@ -1671,56 +1893,126 @@ def check_role():
 
 
 @app.route("/logout", methods=["POST"])
+@token_required
 def logout():
-    """Handles user logout - enhanced to ensure session closure"""
+    """Handles user logout with proper activity logging"""
     try:
         data = request.json
         username = data.get("username")
+        current_user = request.current_user
         
-        # Try to verify token, but don't fail if it's expired
-        token = None
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')['1']
+        # Use the username from token if not provided in body
+        if not username and current_user:
+            username = current_user.get('username')
         
-        if token:
-            # Try to verify, but continue even if token is invalid
-            try:
-                payload = verify_jwt_token(token)
-                if payload:
-                    request.current_user = payload
-            except Exception as e:
-                print(f"Token verification failed during logout: {e}")
-                # Continue with logout even if token is invalid
-        
-        # Always log the logout action and force session update
         if username:
+            # Log the logout action FIRST
             log_action_and_update_report(username, 'Logout')
+            print(f"DEBUG: Logout activity logged for user: {username}")
+            
             # Force immediate session history update
             update_session_history_report(username)
+            print(f"DEBUG: Session history updated for user: {username}")
             
         return jsonify({"message": "Logout successful"})
         
     except Exception as e:
         print(f"Error during logout: {e}")
+        import traceback
+        traceback.print_exc()
         # Still return success to allow client-side cleanup
         return jsonify({"message": "Logout completed"})
-
-@app.route('/api/users-list', methods=['GET'])
-def get_users_list():
+    
+@app.route('/api/users-by-language', methods=['GET'])
+@token_required
+def get_users_by_language():
+    """Fetch annotators filtered by language and organization"""
     try:
-        # Get only approved non-admin users (include reviewers and annotators)
-        users = users_collection.find({
+        # Get the current logged-in user from the token
+        current_user = request.current_user
+        current_username = current_user.get('username')
+        
+        # Get query parameters
+        language = request.args.get('language')
+        
+        # Get the current user's details to find their organization
+        current_user_data = users_collection.find_one({"username": current_username})
+        if not current_user_data:
+            return jsonify({"error": "User not found"}), 404
+        
+        current_user_organization = current_user_data.get('organization')
+        current_user_role = current_user_data.get('role')
+        
+        # Build query based on user role and organization
+        query = {
             'is_approved': True, 
-            'role': {'$ne': 'admin'}  # Only exclude admin, include reviewers and annotators
-        }, {'username': 1, '_id': 0})
+            'role': 'user'  # Only annotators
+        }
+        
+        # Add organization filter for non-system admins
+        if current_user_role not in ['admin', 'developer'] or current_user_organization not in ['SYSTEM_DEVELOPER', None]:
+            query['organization'] = current_user_organization
+        
+        # Add language filter if provided
+        if language:
+            query['languages'] = language
+        
+        users = users_collection.find(
+            query, 
+            {'username': 1, 'organization': 1, 'role': 1, 'languages': 1, '_id': 0}
+        )
         
         user_list = [user['username'] for user in users]
+        
+        print(f"DEBUG: Language filtered users - language: '{language}', org: '{current_user_organization}', users: {user_list}")
+        
         return jsonify(user_list), 200
+        
     except Exception as e:
-        print(f"Error fetching users: {e}")
+        print(f"Error fetching users by language: {e}")
         return jsonify({"error": "Internal server error"}), 500
-    
+      
+@app.route('/api/users/all', methods=['GET'])
+@admin_required
+def get_all_users():
+    """Fetch all users with complete information (admin only) - EXCLUDING DEVELOPERS"""
+    try:
+        # Get all users excluding password field for security AND excluding developers
+        users_cursor = users_collection.find(
+            {"role": {"$ne": "developer"}},  # EXCLUDE DEVELOPERS
+            {'password': 0, 'reset_otp': 0, 'reset_otp_expiry': 0, 'reset_verification_token': 0}
+        ).sort("registered_at", -1)
+        
+        users_list = []
+        for user in users_cursor:
+            user_data = {
+                '_id': str(user['_id']),
+                'username': user.get('username', ''),
+                'email': user.get('email', ''),
+                'full_name': user.get('full_name', ''),
+                'role': user.get('role', ''),
+                'organization': user.get('organization', ''),
+                'languages': user.get('languages', []),
+                'is_approved': user.get('is_approved', False),
+                'is_rejected': user.get('is_rejected', False),
+                'rejection_reason': user.get('rejection_reason', ''),
+                'approved_by': user.get('approved_by', ''),
+                'approved_at': user.get('approved_at', '').strftime('%Y-%m-%d %H:%M:%S') if user.get('approved_at') else '',
+                'rejected_by': user.get('rejected_by', ''),
+                'rejected_at': user.get('rejected_at', '').strftime('%Y-%m-%d %H:%M:%S') if user.get('rejected_at') else '',
+                'registered_at': user.get('registered_at', '').strftime('%Y-%m-%d %H:%M:%S') if user.get('registered_at') else ''
+            }
+            users_list.append(user_data)
+        
+        return jsonify({
+            'users': users_list,
+            'total_count': len(users_list)
+        }), 200
+        
+    except Exception as e:
+        print(f"Error fetching all users: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+           
 @app.route("/api/user/<username>", methods=["GET"])
 def get_user_data(username):
     try:
@@ -1738,10 +2030,10 @@ def get_user_data(username):
 
 # --- Visualization & Analytics Endpoints (UNCHANGED) ---
 
-@app.route("/api/analytics/NE-distribution", methods=["GET"])
+@app.route("/api/analytics/mwe-distribution", methods=["GET"])
 @admin_required
-def get_ne_distribution():
-    """Get comprehensive NE analytics with enhanced metrics"""
+def get_mwe_distribution():
+    """Get comprehensive MWE analytics with enhanced metrics"""
     try:
         # Get optional filters from query parameters
         language = request.args.get("language")
@@ -1770,7 +2062,7 @@ def get_ne_distribution():
         
         # Enhanced statistics with more metrics
         project_stats = {}
-        ne_type_stats = {}
+        mwe_type_stats = {}
         language_stats = {}
         user_stats = {}
         time_stats = {}
@@ -1782,37 +2074,37 @@ def get_ne_distribution():
             sentence_id = tag.get("source_sentence_id")
             annotation_date = tag.get("annotation_date")
             
-            # Enhanced NE type statistics
-            if tag_type not in ne_type_stats:
-                ne_type_stats[tag_type] = {
+            # Enhanced MWE type statistics
+            if tag_type not in mwe_type_stats:
+                mwe_type_stats[tag_type] = {
                     "count": 0, 
                     "unique_words": set(),
                     "unique_users": set(),
                     "first_annotation": annotation_date,
                     "last_annotation": annotation_date
                 }
-            ne_type_stats[tag_type]["count"] += 1
-            ne_type_stats[tag_type]["unique_words"].add(tag_text)
-            ne_type_stats[tag_type]["unique_users"].add(tag_user)
+            mwe_type_stats[tag_type]["count"] += 1
+            mwe_type_stats[tag_type]["unique_words"].add(tag_text)
+            mwe_type_stats[tag_type]["unique_users"].add(tag_user)
             
             # Update date range
             if annotation_date:
-                if ne_type_stats[tag_type]["first_annotation"] is None or annotation_date < ne_type_stats[tag_type]["first_annotation"]:
-                    ne_type_stats[tag_type]["first_annotation"] = annotation_date
-                if ne_type_stats[tag_type]["last_annotation"] is None or annotation_date > ne_type_stats[tag_type]["last_annotation"]:
-                    ne_type_stats[tag_type]["last_annotation"] = annotation_date
+                if mwe_type_stats[tag_type]["first_annotation"] is None or annotation_date < mwe_type_stats[tag_type]["first_annotation"]:
+                    mwe_type_stats[tag_type]["first_annotation"] = annotation_date
+                if mwe_type_stats[tag_type]["last_annotation"] is None or annotation_date > mwe_type_stats[tag_type]["last_annotation"]:
+                    mwe_type_stats[tag_type]["last_annotation"] = annotation_date
             
             # Enhanced user statistics
             if tag_user not in user_stats:
                 user_stats[tag_user] = {
                     "count": 0, 
-                    "ne_types": set(),
+                    "mwe_types": set(),
                     "unique_phrases": set(),
                     "first_annotation": annotation_date,
                     "last_annotation": annotation_date
                 }
             user_stats[tag_user]["count"] += 1
-            user_stats[tag_user]["ne_types"].add(tag_type)
+            user_stats[tag_user]["mwe_types"].add(tag_type)
             user_stats[tag_user]["unique_phrases"].add(tag_text)
             
             # Time-based statistics (by month)
@@ -1848,24 +2140,24 @@ def get_ne_distribution():
                     if project_name not in project_stats:
                         project_stats[project_name] = {
                             "count": 0,
-                            "ne_types": set(),
+                            "mwe_types": set(),
                             "users": set(),
                             "language": project_language
                         }
                     project_stats[project_name]["count"] += 1
-                    project_stats[project_name]["ne_types"].add(tag_type)
+                    project_stats[project_name]["mwe_types"].add(tag_type)
                     project_stats[project_name]["users"].add(tag_user)
                     
                     # Enhanced language stats
                     if project_language not in language_stats:
                         language_stats[project_language] = {
                             "count": 0, 
-                            "ne_types": set(),
+                            "mwe_types": set(),
                             "projects": set(),
                             "users": set()
                         }
                     language_stats[project_language]["count"] += 1
-                    language_stats[project_language]["ne_types"].add(tag_type)
+                    language_stats[project_language]["mwe_types"].add(tag_type)
                     language_stats[project_language]["projects"].add(project_name)
                     language_stats[project_language]["users"].add(tag_user)
         
@@ -1876,15 +2168,15 @@ def get_ne_distribution():
                 "project_name": project_name,
                 "language": stats.get("language", "Unknown"),
                 "count": stats["count"],
-                "ne_type_count": len(stats["ne_types"]),
+                "mwe_type_count": len(stats["mwe_types"]),
                 "user_count": len(stats["users"]),
-                "ne_types": list(stats["ne_types"])[:10]  # Top 10 NE types
+                "mwe_types": list(stats["mwe_types"])[:10]  # Top 10 MWE types
             })
         
-        ne_types_distribution = []
-        for ne_type, stats in ne_type_stats.items():
-            ne_types_distribution.append({
-                "ne_type": ne_type,
+        mwe_types_distribution = []
+        for mwe_type, stats in mwe_type_stats.items():
+            mwe_types_distribution.append({
+                "mwe_type": mwe_type,
                 "count": stats["count"],
                 "unique_word_count": len(stats["unique_words"]),
                 "unique_user_count": len(stats["unique_users"]),
@@ -1898,7 +2190,7 @@ def get_ne_distribution():
             language_distribution.append({
                 "language": lang,
                 "count": stats["count"],
-                "ne_type_count": len(stats["ne_types"]),
+                "mwe_type_count": len(stats["mwe_types"]),
                 "project_count": len(stats["projects"]),
                 "user_count": len(stats["users"])
             })
@@ -1908,11 +2200,11 @@ def get_ne_distribution():
             user_distribution.append({
                 "username": user,
                 "count": stats["count"],
-                "ne_type_count": len(stats["ne_types"]),
+                "mwe_type_count": len(stats["mwe_types"]),
                 "unique_phrase_count": len(stats["unique_phrases"]),
                 "first_annotation": stats["first_annotation"].isoformat() if stats["first_annotation"] else None,
                 "last_annotation": stats["last_annotation"].isoformat() if stats["last_annotation"] else None,
-                "productivity_score": stats["count"] / max(len(stats["ne_types"]), 1)
+                "productivity_score": stats["count"] / max(len(stats["mwe_types"]), 1)
             })
         
         # Time distribution
@@ -1928,10 +2220,10 @@ def get_ne_distribution():
         total_users = len(user_stats)
         total_projects = len(project_stats)
         total_languages = len(language_stats)
-        total_ne_types = len(ne_type_stats)
+        total_mwe_types = len(mwe_type_stats)
         
         avg_annotations_per_user = len(all_tags) / max(total_users, 1)
-        avg_ne_types_per_user = sum(len(stats["ne_types"]) for stats in user_stats.values()) / max(total_users, 1)
+        avg_mwe_types_per_user = sum(len(stats["mwe_types"]) for stats in user_stats.values()) / max(total_users, 1)
         
         print(f"DEBUG: Enhanced analytics processed - Tags: {len(all_tags)}, Users: {total_users}, Projects: {total_projects}")
         
@@ -1941,34 +2233,34 @@ def get_ne_distribution():
                 "total_users": total_users,
                 "total_projects": total_projects,
                 "total_languages": total_languages,
-                "total_ne_types": total_ne_types,
+                "total_mwe_types": total_mwe_types,
                 "avg_annotations_per_user": round(avg_annotations_per_user, 2),
-                "avg_ne_types_per_user": round(avg_ne_types_per_user, 2),
+                "avg_mwe_types_per_user": round(avg_mwe_types_per_user, 2),
                 "time_period": {
                     "start_date": start_date,
                     "end_date": end_date
                 }
             },
-            "ne_types": sorted(ne_types_distribution, key=lambda x: x["count"], reverse=True),
+            "mwe_types": sorted(mwe_types_distribution, key=lambda x: x["count"], reverse=True),
             "language_distribution": sorted(language_distribution, key=lambda x: x["count"], reverse=True),
             "user_distribution": sorted(user_distribution, key=lambda x: x["count"], reverse=True),
             "project_distribution": sorted(project_distribution, key=lambda x: x["count"], reverse=True),
             "time_distribution": time_distribution,
             "top_performers": sorted(user_distribution, key=lambda x: x["count"], reverse=True)[:10],
-            "most_common_ne": sorted(ne_types_distribution, key=lambda x: x["count"], reverse=True)[:10]
+            "most_common_mwe": sorted(mwe_types_distribution, key=lambda x: x["count"], reverse=True)[:10]
         }), 200
         
     except Exception as e:
-        print(f"Error in enhanced NE distribution: {e}")
+        print(f"Error in enhanced MWE distribution: {e}")
         print(f"Error details: {traceback.format_exc()}")
         return jsonify({"error": "Internal server error"}), 500
     
       
-@app.route("/api/analytics/ne-network", methods=["GET"])
-def get_ne_network():
-    """Generate network data for NE relationships"""
+@app.route("/api/analytics/mwe-network", methods=["GET"])
+def get_mwe_network():
+    """Generate network data for MWE relationships"""
     try:
-        # Get all NE annotations
+        # Get all MWE annotations
         all_tags = list(tags_collection.find({}, {
             "text": 1, 
             "tag": 1, 
@@ -1982,15 +2274,15 @@ def get_ne_network():
         node_counter = 0
         
         # Helper function to add or get node ID
-        def get_node_id(text, ne_type):
+        def get_node_id(text, mwe_type):
             nonlocal node_counter
-            key = f"{text}_{ne_type}"
+            key = f"{text}_{mwe_type}"
             if key not in node_ids:
                 node_ids[key] = node_counter
                 nodes.append({
                     "id": node_counter,
                     "name": text,
-                    "ne_type": ne_type,
+                    "mwe_type": mwe_type,
                     "value": 1  # Will be updated with frequency
                 })
                 node_counter += 1
@@ -1999,23 +2291,23 @@ def get_ne_network():
         # First pass: create nodes and count frequencies
         for tag in all_tags:
             text = tag.get("text", "").strip().lower()
-            ne_type = tag.get("tag", "Unknown")
+            mwe_type = tag.get("tag", "Unknown")
             if text:
-                node_id = get_node_id(text, ne_type)
+                node_id = get_node_id(text, mwe_type)
                 nodes[node_id]["value"] += 1
         
         # Second pass: create links based on shared roots and relationships
-        ne_by_type = {}
+        mwe_by_type = {}
         for tag in all_tags:
             text = tag.get("text", "").strip().lower()
-            ne_type = tag.get("tag", "Unknown")
-            if text and ne_type:
-                if ne_type not in ne_by_type:
-                    ne_by_type[ne_type] = []
-                ne_by_type[ne_type].append(text)
+            mwe_type = tag.get("tag", "Unknown")
+            if text and mwe_type:
+                if mwe_type not in mwe_by_type:
+                    mwe_by_type[mwe_type] = []
+                mwe_by_type[mwe_type].append(text)
         
-        # Create links within same NE types (clustering)
-        for ne_type, words in ne_by_type.items():
+        # Create links within same MWE types (clustering)
+        for mwe_type, words in mwe_by_type.items():
             # Simple stemming-based relationships
             word_stems = {}
             for word in words:
@@ -2032,8 +2324,8 @@ def get_ne_network():
                     for i, word1 in enumerate(stem_words):
                         for word2 in stem_words[i+1:]:
                             if word1 != word2:
-                                source_id = get_node_id(word1, ne_type)
-                                target_id = get_node_id(word2, ne_type)
+                                source_id = get_node_id(word1, mwe_type)
+                                target_id = get_node_id(word2, mwe_type)
                                 
                                 # Check if link already exists
                                 existing_link = next(
@@ -2065,7 +2357,7 @@ def get_ne_network():
         }), 200
         
     except Exception as e:
-        print(f"Error generating NE network: {e}")
+        print(f"Error generating MWE network: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
 @app.route("/api/analytics/annotation-timeline", methods=["GET"])
@@ -2261,12 +2553,12 @@ def download_analytics_report():
             user_tags = list(tags_collection.find({"username": username}))
             user_tags_count = len(user_tags)
             
-            # User NE type diversity
-            user_ne_types = set(tag.get("tag", "Unknown") for tag in user_tags)
+            # User MWE type diversity
+            user_mwe_types = set(tag.get("tag", "Unknown") for tag in user_tags)
             
             # Calculate enhanced metrics
             approval_rate = (user_annotated_sentences / user_total_sentences * 100) if user_total_sentences > 0 else 0
-            productivity_score = user_tags_count / max(len(user_ne_types), 1)
+            productivity_score = user_tags_count / max(len(user_mwe_types), 1)
             
             user_stats.append({
                 "username": username,
@@ -2276,20 +2568,20 @@ def download_analytics_report():
                 "total_sentences": user_total_sentences,
                 "annotated_sentences": user_annotated_sentences,
                 "total_annotations": user_tags_count,
-                "ne_type_diversity": len(user_ne_types),
+                "mwe_type_diversity": len(user_mwe_types),
                 "approval_rate": round(approval_rate, 1),
                 "productivity_score": round(productivity_score, 2),
                 "status": "Active" if user_tags_count > 0 else "Inactive"
             })
 
-        # Enhanced NE type statistics
-        ne_stats = []
-        ne_type_counts = {}
+        # Enhanced MWE type statistics
+        mwe_stats = []
+        mwe_type_counts = {}
         
         for tag in all_tags:
-            ne_type = tag.get("tag", "Unknown")
-            if ne_type not in ne_type_counts:
-                ne_type_counts[ne_type] = {
+            mwe_type = tag.get("tag", "Unknown")
+            if mwe_type not in mwe_type_counts:
+                mwe_type_counts[mwe_type] = {
                     "count": 0,
                     "unique_phrases": set(),
                     "unique_annotators": set(),
@@ -2297,27 +2589,27 @@ def download_analytics_report():
                     "first_annotation": tag.get("annotation_date"),
                     "last_annotation": tag.get("annotation_date")
                 }
-            ne_type_counts[ne_type]["count"] += 1
-            ne_type_counts[ne_type]["unique_phrases"].add(tag.get("text", "").lower())
-            ne_type_counts[ne_type]["unique_annotators"].add(tag.get("username", ""))
+            mwe_type_counts[mwe_type]["count"] += 1
+            mwe_type_counts[mwe_type]["unique_phrases"].add(tag.get("text", "").lower())
+            mwe_type_counts[mwe_type]["unique_annotators"].add(tag.get("username", ""))
             
             # Track projects
             if tag.get("source_sentence_id"):
                 sentence = sentences_collection.find_one({"_id": ObjectId(tag["source_sentence_id"])})
                 if sentence and sentence.get("project_id"):
-                    ne_type_counts[ne_type]["projects"].add(sentence["project_id"])
+                    mwe_type_counts[mwe_type]["projects"].add(sentence["project_id"])
             
             # Update date range
             annotation_date = tag.get("annotation_date")
             if annotation_date:
-                if ne_type_counts[ne_type]["first_annotation"] is None or annotation_date < ne_type_counts[ne_type]["first_annotation"]:
-                    ne_type_counts[ne_type]["first_annotation"] = annotation_date
-                if ne_type_counts[ne_type]["last_annotation"] is None or annotation_date > ne_type_counts[ne_type]["last_annotation"]:
-                    ne_type_counts[ne_type]["last_annotation"] = annotation_date
+                if mwe_type_counts[mwe_type]["first_annotation"] is None or annotation_date < mwe_type_counts[mwe_type]["first_annotation"]:
+                    mwe_type_counts[mwe_type]["first_annotation"] = annotation_date
+                if mwe_type_counts[mwe_type]["last_annotation"] is None or annotation_date > mwe_type_counts[mwe_type]["last_annotation"]:
+                    mwe_type_counts[mwe_type]["last_annotation"] = annotation_date
         
-        for ne_type, stats in ne_type_counts.items():
-            ne_stats.append({
-                "ne_type": ne_type,
+        for mwe_type, stats in mwe_type_counts.items():
+            mwe_stats.append({
+                "mwe_type": mwe_type,
                 "count": stats["count"],
                 "unique_phrases_count": len(stats["unique_phrases"]),
                 "unique_annotators_count": len(stats["unique_annotators"]),
@@ -2428,7 +2720,7 @@ def download_analytics_report():
             if detail_level in ["detailed", "comprehensive"]:
                 # User Performance Dashboard
                 writer.writerow(["USER PERFORMANCE DASHBOARD"])
-                writer.writerow(["Username", "Full Name", "Role", "Organization", "Total Sentences", "Annotated Sentences", "Total Annotations", "NE Diversity", "Approval Rate", "Productivity Score", "Status"])
+                writer.writerow(["Username", "Full Name", "Role", "Organization", "Total Sentences", "Annotated Sentences", "Total Annotations", "MWE Diversity", "Approval Rate", "Productivity Score", "Status"])
                 for user in sorted(user_stats, key=lambda x: x["total_annotations"], reverse=True):
                     writer.writerow([
                         user["username"],
@@ -2438,26 +2730,26 @@ def download_analytics_report():
                         user["total_sentences"],
                         user["annotated_sentences"],
                         user["total_annotations"],
-                        user["ne_type_diversity"],
+                        user["mwe_type_diversity"],
                         f"{user['approval_rate']}%",
                         user["productivity_score"],
                         user["status"]
                     ])
                 writer.writerow([])
             
-            # NE Statistics
-            writer.writerow(["NE TYPE STATISTICS"])
-            writer.writerow(["NE Type", "Count", "Unique Phrases", "Unique Annotators", "Projects", "First Annotation", "Last Annotation", "Popularity"])
-            for ne in sorted(ne_stats, key=lambda x: x["count"], reverse=True):
+            # MWE Statistics
+            writer.writerow(["MWE TYPE STATISTICS"])
+            writer.writerow(["MWE Type", "Count", "Unique Phrases", "Unique Annotators", "Projects", "First Annotation", "Last Annotation", "Popularity"])
+            for mwe in sorted(mwe_stats, key=lambda x: x["count"], reverse=True):
                 writer.writerow([
-                    ne["ne_type"],
-                    ne["count"],
-                    ne["unique_phrases_count"],
-                    ne["unique_annotators_count"],
-                    ne["project_count"],
-                    ne["first_annotation"],
-                    ne["last_annotation"],
-                    ne["popularity_rank"]
+                    mwe["mwe_type"],
+                    mwe["count"],
+                    mwe["unique_phrases_count"],
+                    mwe["unique_annotators_count"],
+                    mwe["project_count"],
+                    mwe["first_annotation"],
+                    mwe["last_annotation"],
+                    mwe["popularity_rank"]
                 ])
             writer.writerow([])
             
@@ -2481,7 +2773,7 @@ def download_analytics_report():
             if detail_level == "comprehensive":
                 writer.writerow([])
                 writer.writerow(["DETAILED ANNOTATION DATA"])
-                writer.writerow(["Annotation ID", "NE Type", "Phrase", "Annotator", "Project", "Sentence Text Preview", "Annotation Date"])
+                writer.writerow(["Annotation ID", "MWE Type", "Phrase", "Annotator", "Project", "Sentence Text Preview", "Annotation Date"])
                 for i, tag in enumerate(all_tags[:1000]):  # Limit to first 1000 for file size
                     sentence_text = "N/A"
                     project_name = "N/A"
@@ -2532,11 +2824,11 @@ def download_analytics_report():
                     "avg_annotations_per_user": round((len(all_tags)/max(total_annotators, 1)), 1)
                 },
                 "user_performance": sorted(user_stats, key=lambda x: x["total_annotations"], reverse=True),
-                "ne_statistics": sorted(ne_stats, key=lambda x: x["count"], reverse=True),
+                "mwe_statistics": sorted(mwe_stats, key=lambda x: x["count"], reverse=True),
                 "project_statistics": sorted(project_stats, key=lambda x: x["completion_rate"], reverse=True),
                 "key_insights": {
                     "top_performer": max(user_stats, key=lambda x: x["total_annotations"]) if user_stats else None,
-                    "most_common_ne": max(ne_stats, key=lambda x: x["count"]) if ne_stats else None,
+                    "most_common_mwe": max(mwe_stats, key=lambda x: x["count"]) if mwe_stats else None,
                     "most_complete_project": max(project_stats, key=lambda x: x["completion_rate"]) if project_stats else None,
                     "annotation_trend": "Growing" if len(all_tags) > 1000 else "Stable" if len(all_tags) > 500 else "Developing"
                 }
@@ -2576,7 +2868,7 @@ def download_pdf_with_charts():
         
         # Calculate statistics (same as your existing analytics logic)
         project_stats = {}
-        ne_type_stats = {}
+        mwe_type_stats = {}
         language_stats = {}
         user_stats = {}
         
@@ -2585,17 +2877,17 @@ def download_pdf_with_charts():
             tag_user = tag.get("username", "Unknown")
             sentence_id = tag.get("source_sentence_id")
             
-            # Count by NE type
-            if tag_type not in ne_type_stats:
-                ne_type_stats[tag_type] = {"count": 0, "unique_words": set()}
-            ne_type_stats[tag_type]["count"] += 1
-            ne_type_stats[tag_type]["unique_words"].add(tag.get("text", "").lower())
+            # Count by MWE type
+            if tag_type not in mwe_type_stats:
+                mwe_type_stats[tag_type] = {"count": 0, "unique_words": set()}
+            mwe_type_stats[tag_type]["count"] += 1
+            mwe_type_stats[tag_type]["unique_words"].add(tag.get("text", "").lower())
             
             # Count by user
             if tag_user not in user_stats:
-                user_stats[tag_user] = {"count": 0, "ne_types": set()}
+                user_stats[tag_user] = {"count": 0, "mwe_types": set()}
             user_stats[tag_user]["count"] += 1
-            user_stats[tag_user]["ne_types"].add(tag_type)
+            user_stats[tag_user]["mwe_types"].add(tag_type)
             
             # Count by project and language
             if sentence_id:
@@ -2622,22 +2914,22 @@ def download_pdf_with_charts():
                     if project_name not in project_stats:
                         project_stats[project_name] = {
                             "count": 0,
-                            "ne_types": set()
+                            "mwe_types": set()
                         }
                     project_stats[project_name]["count"] += 1
-                    project_stats[project_name]["ne_types"].add(tag_type)
+                    project_stats[project_name]["mwe_types"].add(tag_type)
                     
                     # Update language stats
                     if project_language not in language_stats:
-                        language_stats[project_language] = {"count": 0, "ne_types": set()}
+                        language_stats[project_language] = {"count": 0, "mwe_types": set()}
                     language_stats[project_language]["count"] += 1
-                    language_stats[project_language]["ne_types"].add(tag_type)
+                    language_stats[project_language]["mwe_types"].add(tag_type)
         
         # Convert to chart-ready formats
-        ne_chart_data = []
-        for ne_type, stats in ne_type_stats.items():
-            ne_chart_data.append({
-                "ne_type": ne_type,
+        mwe_chart_data = []
+        for mwe_type, stats in mwe_type_stats.items():
+            mwe_chart_data.append({
+                "mwe_type": mwe_type,
                 "count": stats["count"],
                 "unique_word_count": len(stats["unique_words"])
             })
@@ -2654,7 +2946,7 @@ def download_pdf_with_charts():
             user_chart_data.append({
                 "username": user,
                 "count": stats["count"],
-                "ne_type_count": len(stats["ne_types"])
+                "mwe_type_count": len(stats["mwe_types"])
             })
         
         project_chart_data = []
@@ -2662,7 +2954,7 @@ def download_pdf_with_charts():
             project_chart_data.append({
                 "project_name": project_name,
                 "count": stats["count"],
-                "ne_type_count": len(stats["ne_types"])
+                "mwe_type_count": len(stats["mwe_types"])
             })
         
         # Get timeline data
@@ -2734,14 +3026,14 @@ def download_pdf_with_charts():
         return jsonify({
             "summary": {
                 "total_annotations": len(all_tags),
-                "total_ne_types": len(ne_type_stats),
+                "total_mwe_types": len(mwe_type_stats),
                 "total_languages": len(language_stats),
                 "total_users": len(user_stats),
                 "total_projects": len(project_stats),
                 "report_generated": get_ist_time().strftime("%Y-%m-%d %H:%M:%S UTC")
             },
             "charts": {
-                "ne_distribution": ne_chart_data,
+                "mwe_distribution": mwe_chart_data,
                 "language_distribution": language_chart_data,
                 "user_distribution": user_chart_data,
                 "project_distribution": project_chart_data,
@@ -2790,7 +3082,7 @@ def generate_chart():
         colors = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4']
         
         for i, item in enumerate(chart_data):
-            label_key = next((key for key in ['ne_type', 'language', 'username', 'project_name'] if key in item), 'label')
+            label_key = next((key for key in ['mwe_type', 'language', 'username', 'project_name'] if key in item), 'label')
             value_key = next((key for key in ['count', 'value'] if key in item), 'value')
             
             labels.append(item.get(label_key, f'Item {i+1}'))
@@ -2889,7 +3181,7 @@ def get_comprehensive_report():
             {"$group": {
                 "_id": "$username",
                 "total_annotations": {"$sum": 1},
-                "unique_ne_types": {"$addToSet": "$tag"},
+                "unique_mwe_types": {"$addToSet": "$tag"},
                 "unique_phrases": {"$addToSet": "$text"},
                 "projects": {"$addToSet": "$source_sentence_id"},
                 "first_annotation": {"$min": "$annotation_date"},
@@ -2916,7 +3208,7 @@ def get_comprehensive_report():
             {"$project": {
                 "username": "$_id",
                 "total_annotations": 1,
-                "unique_ne_count": {"$size": "$unique_ne_types"},
+                "unique_mwe_count": {"$size": "$unique_mwe_types"},
                 "unique_phrases_count": {"$size": "$unique_phrases"},
                 "project_count": {"$size": {
                     "$setUnion": [
@@ -3055,14 +3347,14 @@ def get_comprehensive_report():
                 },
                 "daily_annotations": {"$sum": 1},
                 "unique_annotators": {"$addToSet": "$username"},
-                "ne_types_used": {"$addToSet": "$tag"}
+                "mwe_types_used": {"$addToSet": "$tag"}
             }},
             {"$sort": {"_id": 1}},
             {"$project": {
                 "date": "$_id",
                 "daily_annotations": 1,
                 "unique_annotators_count": {"$size": "$unique_annotators"},
-                "ne_types_count": {"$size": "$ne_types_used"},
+                "mwe_types_count": {"$size": "$mwe_types_used"},
                 "avg_annotations_per_user": {
                     "$divide": ["$daily_annotations", {"$max": [{"$size": "$unique_annotators"}, 1]}]
                 },
@@ -3084,8 +3376,8 @@ def get_comprehensive_report():
         else:
             growth_rate = 0
         
-        # Enhanced NE type distribution with trends
-        ne_distribution = list(tags_collection.aggregate([
+        # Enhanced MWE type distribution with trends
+        mwe_distribution = list(tags_collection.aggregate([
             {"$match": tag_filter},
             {"$group": {
                 "_id": "$tag",
@@ -3097,7 +3389,7 @@ def get_comprehensive_report():
                 "projects": {"$addToSet": "$source_sentence_id"}
             }},
             {"$project": {
-                "ne_type": "$_id",
+                "mwe_type": "$_id",
                 "count": 1,
                 "unique_phrases_count": {"$size": "$unique_phrases"},
                 "unique_users_count": {"$size": "$unique_users"},
@@ -3149,7 +3441,7 @@ def get_comprehensive_report():
         quality_metrics = {
             "average_annotations_per_user": total_annotations / max(len(user_performance), 1),
             "top_performer": user_performance[0] if user_performance else None,
-            "most_common_ne": ne_distribution[0] if ne_distribution else None,
+            "most_common_mwe": mwe_distribution[0] if mwe_distribution else None,
             "total_projects": len(project_progress),
             "active_projects": len([p for p in project_progress if p.get('completion_rate', 0) < 100 and p.get('completion_rate', 0) > 0]),
             "completed_projects": len([p for p in project_progress if p.get('completion_rate', 0) == 100]),
@@ -3168,19 +3460,19 @@ def get_comprehensive_report():
             },
             "detailed": {
                 **quality_metrics,
-                "ne_diversity": len(ne_distribution),
+                "mwe_diversity": len(mwe_distribution),
                 "avg_project_completion": sum(p.get('completion_rate', 0) for p in project_progress) / max(len(project_progress), 1),
-                "annotation_consistency": "High" if len(set(ne.get('ne_type') for mwe in ne_distribution)) > 10 else "Medium"
+                "annotation_consistency": "High" if len(set(mwe.get('mwe_type') for mwe in mwe_distribution)) > 10 else "Medium"
             },
             "executive": {
                 "performance_rating": "Excellent" if quality_metrics['user_engagement_score'] > 80 else "Good" if quality_metrics['user_engagement_score'] > 60 else "Needs Improvement",
                 "key_achievements": [
                     f"{quality_metrics['completed_projects']} projects completed",
                     f"{total_annotations} total annotations",
-                    f"{len(ne_distribution)} NE types identified"
+                    f"{len(mwe_distribution)} MWE types identified"
                 ],
                 "recommendations": [
-                    "Increase user training on rare NE types" if any(ne.get('unique_users_count', 0) < 3 for ne in ne_distribution) else "Maintain current annotation quality",
+                    "Increase user training on rare MWE types" if any(mwe.get('unique_users_count', 0) < 3 for mwe in mwe_distribution) else "Maintain current annotation quality",
                     "Focus on incomplete projects" if quality_metrics['active_projects'] > 2 else "All projects are on track"
                 ]
             }
@@ -3203,12 +3495,12 @@ def get_comprehensive_report():
             "user_performance": user_performance,
             "project_progress": project_progress,
             "timeline_data": timeline_data,
-            "ne_distribution": ne_distribution,
+            "mwe_distribution": mwe_distribution,
             "quality_metrics": quality_metrics,
             "key_insights": {
                 "busiest_day": max(timeline_data, key=lambda x: x['daily_annotations']) if timeline_data else None,
                 "most_productive_user": max(user_performance, key=lambda x: x['total_annotations']) if user_performance else None,
-                "most_diverse_annotator": max(user_performance, key=lambda x: x['unique_ne_count']) if user_performance else None,
+                "most_diverse_annotator": max(user_performance, key=lambda x: x['unique_mwe_count']) if user_performance else None,
                 "most_complex_project": max(project_progress, key=lambda x: x.get('total_annotations', 0)) if project_progress else None
             }
         }), 200
@@ -4180,16 +4472,16 @@ def download_project_data(project_id):
                     output_lines.append(f"  {annotator}: {stats['annotations']} annotations across {stats['sentences']} sentences")
                 output_lines.append("")
                 
-                # NE type statistics
-                ne_stats = {}
+                # MWE type statistics
+                mwe_stats = {}
                 for sentence in unique_sentences:
                     for annotation in sentence.get("annotations", []):
-                        NE_type = annotation.get("tag", "Unknown")
-                        ne_stats[ne_type] = ne_stats.get(ne_type, 0) + 1
+                        mwe_type = annotation.get("tag", "Unknown")
+                        mwe_stats[mwe_type] = mwe_stats.get(mwe_type, 0) + 1
                 
-                output_lines.append("NE TYPE DISTRIBUTION:")
-                for ne_type, count in sorted(ne_stats.items(), key=lambda x: x[1], reverse=True):
-                    output_lines.append(f"  {ne_type}: {count} occurrences")
+                output_lines.append("MWE TYPE DISTRIBUTION:")
+                for mwe_type, count in sorted(mwe_stats.items(), key=lambda x: x[1], reverse=True):
+                    output_lines.append(f"  {mwe_type}: {count} occurrences")
                 
             else:
                 # Full annotation report
@@ -4229,7 +4521,7 @@ def download_project_data(project_id):
 
                             # Enhanced annotation line
                             output_lines.append(
-                                f"  NE: {tag_label}, Phrase: '{tag_text}', Annotator: {annotated_by}, Date: {annotation_dt_str}, ID: {tag_doc.get('_id', 'N/A')}"
+                                f"  MWE: {tag_label}, Phrase: '{tag_text}', Annotator: {annotated_by}, Date: {annotation_dt_str}, ID: {tag_doc.get('_id', 'N/A')}"
                             )
 
                     output_lines.append("") # Empty line for separation
@@ -4658,7 +4950,7 @@ def get_project_sentences(project_id):
                     "tag": tag.get("tag", ""),
                     "username": tag.get("username", ""),
                     "annotation_date": tag.get("annotation_date"),
-                    "neId": tag.get("neId"),
+                    "mweId": tag.get("mweId"),
                     "_id": str(tag["_id"]),
                     "review_status": "Approved", 
                     "review_comments": tag.get("review_comments", "")
@@ -4674,7 +4966,7 @@ def get_project_sentences(project_id):
                     "tag": tag.get("tag", ""),
                     "username": tag.get("username", ""),
                     "annotation_date": tag.get("annotation_date"),
-                    "neId": tag.get("neId"),
+                    "mweId": tag.get("mweId"),
                     "_id": str(tag["_id"]),
                     "review_comments": tag.get("review_comments", "")
                 }
@@ -4724,21 +5016,40 @@ def get_project_sentences(project_id):
           
 @app.route('/api/activity-logs/<username>', methods=["GET"])
 def get_activity_logs(username):
-    """Fetches activity history for the given username (admin required)."""
+    """Fetches activity history for users in the same organization (admin only)."""
     try:
+        print(f"🔍 [BACKEND DEBUG] /api/activity-logs/{username} called")
+        
         # Authorization check - the requesting user must be admin
         requesting_user = users_collection.find_one({"username": username})
+        print(f"🔍 [BACKEND DEBUG] Requesting user: {requesting_user}")
+        
         if not requesting_user or requesting_user.get("role") != "admin":
+            print(f"🔍 [BACKEND DEBUG] User is not admin or not found")
             return jsonify({"message": "Unauthorized access"}), 403
 
+        # Get the requesting admin's organization
+        admin_organization = requesting_user.get('organization')
+        print(f"🔍 [BACKEND DEBUG] Admin organization: {admin_organization}")
+        
         # Get target username from query parameter (if provided)
         target_username = request.args.get('target_user')
+        print(f"🔍 [BACKEND DEBUG] Target username: {target_username}")
         
         all_history = []
         
         if target_username:
-            # Fetch logs for specific user
+            # Fetch logs for specific user, but verify they belong to the same organization
+            target_user = users_collection.find_one({"username": target_username})
+            if not target_user:
+                return jsonify({"message": "Target user not found"}), 404
+                
+            if target_user.get('organization') != admin_organization:
+                return jsonify({"message": "Cannot access logs from different organization"}), 403
+                
+            print(f"🔍 [BACKEND DEBUG] Fetching logs for specific user: {target_username}")
             user_doc = user_session_history_collection.find_one({"username": target_username})
+            print(f"🔍 [BACKEND DEBUG] User session doc: {user_doc}")
             if user_doc:
                 for session in user_doc.get('sessions', []):
                     all_history.append({
@@ -4747,24 +5058,52 @@ def get_activity_logs(username):
                         **session
                     })
         else:
-            # Fetch logs for ALL users (current behavior)
-            for user_doc in user_session_history_collection.find():
-                for session in user_doc.get('sessions', []):
+            # Fetch logs for ALL users in the SAME ORGANIZATION
+            print(f"🔍 [BACKEND DEBUG] Fetching logs for users in organization: {admin_organization}")
+            
+            # First, get all users in the same organization
+            org_users = users_collection.find(
+                {"organization": admin_organization}, 
+                {"username": 1}
+            )
+            org_usernames = [user['username'] for user in org_users]
+            
+            print(f"🔍 [BACKEND DEBUG] Users in organization: {org_usernames}")
+            
+            # Then fetch session history for these users only
+            all_users = user_session_history_collection.find({
+                "username": {"$in": org_usernames}
+            })
+            
+            user_count = user_session_history_collection.count_documents({
+                "username": {"$in": org_usernames}
+            })
+            print(f"🔍 [BACKEND DEBUG] Total users in session history for org: {user_count}")
+            
+            for user_doc in all_users:
+                print(f"🔍 [BACKEND DEBUG] Processing user: {user_doc.get('username')}")
+                sessions = user_doc.get('sessions', [])
+                print(f"🔍 [BACKEND DEBUG] Sessions count for {user_doc.get('username')}: {len(sessions)}")
+                
+                for session in sessions:
                     all_history.append({
                         "id": f"{user_doc['username']}_{session.get('loginTimeIST', '')}",
                         "username": user_doc['username'],
                         **session
                     })
 
+        print(f"🔍 [BACKEND DEBUG] Total history entries found: {len(all_history)}")
+        
         # Sort by login time, descending
         all_history.sort(key=lambda x: datetime.strptime(x['loginTimeIST'], '%d/%m/%Y, %H:%M:%S') if x['loginTimeIST'] else datetime.min, reverse=True)
         return jsonify(all_history)
         
     except Exception as e:
-        print(f"Error fetching activity logs: {e}")
+        print(f"❌ [BACKEND DEBUG] Error fetching activity logs: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": "Internal server error"}), 500
-     
-    
+        
 @app.route('/sentences/<sentence_id>/tags/<tag_id>', methods=['DELETE'])
 def remove_tag_from_sentence(sentence_id, tag_id):
     try:
@@ -4817,10 +5156,13 @@ def remove_any_tag(tag_id):
         return jsonify({"error": "Internal server error"}), 500
     
 @app.route('/tags', methods=['POST'])
+@token_required
 def add_or_update_tag():
     """
-    MODIFIED: Annotator adds/updates a tag. It now writes directly to tags_collection.
-    Only when sentence is submitted for review, tags become "pending".
+    Annotator adds/updates a tag.
+    - If the parent sentence is under review AND this is an existing tag being updated, 
+      it goes to staging with review_status='Pending'.
+    - NEW tags added to a sentence under review should NOT automatically be pending.
     """
     try:
         data = request.get_json()
@@ -4828,14 +5170,20 @@ def add_or_update_tag():
         if not all(field in data for field in required_fields):
             return jsonify({'error': 'Missing required fields in request'}), 400
 
-        username = data['username']
-        text = data['text']
-        tag_label = data['tag']
-        sentence_id = data['sentenceId']
+        username = data['username'].strip()
+        text = data['text'].strip()
+        tag_label = data['tag'].strip()
+        sentence_id = data['sentenceId'].strip()
 
-        IST = ZoneInfo("Asia/Kolkata") 
+        # Verify user exists
+        user_doc = users_collection.find_one({"username": username})
+        if not user_doc:
+            return jsonify({"error": "User not found"}), 404
+        user_email = user_doc.get("email")
 
-        # Check if sentence is submitted for review
+        IST = ZoneInfo("Asia/Kolkata")
+
+        # Get sentence document
         sentence = sentences_collection.find_one({"_id": ObjectId(sentence_id)})
         is_pending_review = sentence and sentence.get('review_status') == 'PENDING_REVIEW'
 
@@ -4847,18 +5195,26 @@ def add_or_update_tag():
             'annotation_date': datetime.now(IST),
         }
 
-        if is_pending_review:
-            # If sentence is pending review, tag goes to staged_tags with pending status
+        # Check if this is an existing tag (being edited) or a new tag
+        existing_tag = tags_collection.find_one({
+            'source_sentence_id': sentence_id,
+            'username': username,
+            'text': text
+        })
+        
+        existing_staged_tag = staged_tags_collection.find_one({
+            'source_sentence_id': sentence_id,
+            'username': username,
+            'text': text
+        })
+
+        is_existing_tag = existing_tag or existing_staged_tag
+
+        if is_pending_review and is_existing_tag:
+            # ✅ Sentence is pending review AND this is an existing tag being updated → go to staging
             tag_data['review_status'] = 'Pending'
             tag_data['status'] = 'Staged/Pending Review'
-            
-            # Check if tag already exists in staged_tags
-            existing_staged_tag = staged_tags_collection.find_one({
-                'source_sentence_id': sentence_id, 
-                'username': username,
-                'text': text
-            })
-            
+
             if existing_staged_tag:
                 staged_tags_collection.update_one(
                     {'_id': existing_staged_tag['_id']},
@@ -4868,26 +5224,20 @@ def add_or_update_tag():
             else:
                 staged_tags_collection.insert_one(tag_data)
                 message = 'Tag created and staged (pending review)'
-                
+
         else:
-            # Normal case - tag goes directly to approved tags
+            # ✅ Either:
+            # 1. Sentence is NOT pending review → auto-approve tag
+            # 2. Sentence IS pending review but this is a NEW tag → auto-approve it
             tag_data['review_status'] = 'Approved'
             tag_data['reviewed_by'] = 'auto_approved'
             tag_data['reviewed_at'] = datetime.now(IST)
-            
-            # Check if tag already exists in tags
-            existing_tag = tags_collection.find_one({
-                'source_sentence_id': sentence_id, 
-                'username': username,
-                'text': text
-            })
-            
+
             if existing_tag:
                 tags_collection.update_one(
                     {'_id': existing_tag['_id']},
                     {'$set': tag_data}
                 )
-                # Also update search_tags
                 search_tags_collection.update_one(
                     {'_id': existing_tag['_id']},
                     {'$set': tag_data}
@@ -4895,27 +5245,134 @@ def add_or_update_tag():
                 message = 'Tag updated successfully'
             else:
                 result = tags_collection.insert_one(tag_data)
-                # Also insert into search_tags
                 search_tags_collection.insert_one(tag_data)
                 message = 'Tag created successfully'
 
-        # Update sentence annotation status
+        # ✅ Update sentence annotation metadata
         sentences_collection.update_one(
             {'_id': ObjectId(sentence_id)},
             {'$set': {
                 'is_annotated': True,
-                'annotation_email': username,
+                'annotation_email': user_email,
                 'annotation_datetime': get_ist_time()
             }}
         )
 
+        # ✅ Log action
         log_action_and_update_report(username, f"Added tag '{text}' as '{tag_label}'")
+
         return jsonify({'message': message}), 200
-        
+
     except Exception as e:
-        print(f"Error in /tags POST endpoint: {e}")
+        print(f"❌ Error in /tags POST endpoint: {e}")
         return jsonify({'error': 'An internal server error occurred'}), 500
- 
+
+    
+@app.route('/api/reviewer/tag/<tag_id>/approve', methods=['PUT'])
+@token_required
+def approve_single_tag(tag_id):
+    """Approve a single tag"""
+    try:
+        data = request.json
+        reviewer_username = data.get('reviewer_username')
+        
+        # Find the tag in staged_tags
+        staged_tag = staged_tags_collection.find_one({"_id": ObjectId(tag_id)})
+        if not staged_tag:
+            return jsonify({"message": "Tag not found or already reviewed."}), 404
+            
+        sentence_id = staged_tag.get('source_sentence_id')
+        annotator_username = staged_tag.get('username')
+        
+        # Create final tag with approved status
+        final_tag = {
+            'tag': staged_tag.get('tag'),
+            'source_sentence_id': staged_tag.get('source_sentence_id'),
+            'username': staged_tag.get('username'),
+            'text': staged_tag.get('text'),
+            'annotation_date': staged_tag.get('annotation_date'),
+            'review_status': 'Approved',  
+            'reviewed_by': reviewer_username,
+            'reviewed_at': get_ist_time()
+        }
+        
+        # Insert into final collections
+        tags_collection.insert_one(final_tag)
+        search_tags_collection.insert_one(final_tag)
+
+        # Remove from staged collection
+        staged_tags_collection.delete_one({"_id": ObjectId(tag_id)})
+        
+        # Update sentence review status - THIS IS CRITICAL
+        update_sentence_review_status(sentence_id)
+        
+        # Log the action
+        log_reviewer_action(reviewer_username, 
+                           f"Approved tag '{final_tag.get('text')}' by {annotator_username}.")
+        log_action_and_update_report(annotator_username, 
+                                   f"Tag '{final_tag.get('text')}' was approved by reviewer {reviewer_username}.")
+
+        return jsonify({"message": "Tag approved successfully."}), 200
+    except Exception as e:
+        print(f"Error approving tag: {e}")
+        return jsonify({"error": "Internal server error during tag approval."}), 500
+
+@app.route('/api/reviewer/tag/<tag_id>/reject', methods=['PUT'])
+@token_required
+def reject_single_tag(tag_id):
+    try:
+        data = request.json
+        reviewer_username = data.get('reviewer_username')
+        comments = data.get('comments', '')
+        
+        # Find the tag in staged_tags
+        staged_tag = staged_tags_collection.find_one({"_id": ObjectId(tag_id)})
+        if not staged_tag:
+            return jsonify({"message": "Tag not found."}), 404
+            
+        sentence_id = staged_tag.get('source_sentence_id')
+        annotator_username = staged_tag.get('username')
+        
+        # Mark as rejected
+        staged_tags_collection.update_one(
+            {"_id": ObjectId(tag_id)},
+            {"$set": {
+                "review_status": "Rejected",
+                "review_comments": comments,
+                "reviewed_by": reviewer_username,
+                "reviewed_at": get_ist_time()
+            }}
+        )
+        
+        # ✅ NEW: Create revision note for individual tag rejection
+        revision_note_data = {
+            "sentence_id": sentence_id,
+            "annotator_username": annotator_username,
+            "reviewer_username": reviewer_username,
+            "revision_comment": f"Tag rejected: {comments}",
+            "rejection_date": get_ist_time(),
+            "acknowledged": False,
+            "tag_id": tag_id,  # Store which specific tag was rejected
+            "rejected_tag_text": staged_tag.get('text', ''),
+            "rejected_tag_type": staged_tag.get('tag', '')
+        }
+        
+        revision_notes_collection.insert_one(revision_note_data)
+        
+        # Update sentence status
+        update_sentence_review_status(sentence_id)
+        
+        # Log the action
+        log_reviewer_action(reviewer_username, 
+                           f"Rejected tag '{staged_tag.get('text')}' by {annotator_username}.")
+        log_action_and_update_report(annotator_username, 
+                                   f"Tag '{staged_tag.get('text')}' was rejected by reviewer {reviewer_username}.")
+
+        return jsonify({"message": "Tag rejected successfully."}), 200
+    except Exception as e:
+        print(f"Error rejecting tag: {e}")
+        return jsonify({"error": "Internal server error during tag rejection."}), 500
+       
 @app.route('/reviewer/sentence/<sentence_id>/tags', methods=['GET'])
 def get_staged_tags_for_review(sentence_id):
     """
@@ -5225,18 +5682,24 @@ def update_sentence_status(sentence_id):
     new_status = data.get('is_annotated')
     username = data.get('username') 
     
-    if new_status is None: return jsonify({"error": "is_annotated status is required"}), 400
-    if not username: return jsonify({"error": "Username is required for status update and logging."}), 400
+    if new_status is None: 
+        return jsonify({"error": "is_annotated status is required"}), 400
+    if not username: 
+        return jsonify({"error": "Username is required for status update and logging."}), 400
+    
+    # Get the user's actual email
+    user_doc = users_collection.find_one({"username": username})
+    if not user_doc:
+        return jsonify({"error": "User not found"}), 404
+        
+    user_email = user_doc.get("email")
     
     update_fields = {"is_annotated": new_status}
     IST = ZoneInfo("Asia/Kolkata") 
     
     # Capture Annotated by (Email) and Annotation Date/Time upon annotation
     if new_status:
-        user_doc = users_collection.find_one({"username": username})
-        user_email = user_doc.get("email") if user_doc else None
-        
-        update_fields["annotation_email"] = user_email
+        update_fields["annotation_email"] = user_email  # Use actual user email
         update_fields["annotation_datetime"] = datetime.now(IST)
     else:
         # Clear metadata if un-annotating
@@ -5247,7 +5710,8 @@ def update_sentence_status(sentence_id):
             {"_id": ObjectId(sentence_id)}, {"$set": update_fields}
         )
         
-    if result.matched_count == 0: return jsonify({"message": "Sentence not found"}), 404
+    if result.matched_count == 0: 
+        return jsonify({"message": "Sentence not found"}), 404
     
     # Log the action
     sentence = sentences_collection.find_one({"_id": ObjectId(sentence_id)})
@@ -5257,92 +5721,7 @@ def update_sentence_status(sentence_id):
         
     return jsonify({"message": "Status updated successfully"})
 
-@app.route('/api/sentence/submit_for_review', methods=['POST'])
-@token_required
-def submit_for_review():
-    """
-    Endpoint 1: Annotator's Action - Pushes the tagged sentence to the Reviewer's queue.
-    Moves all approved tags to staged_tags with pending status.
-    """
-    try:
-        data = request.get_json()
-        sentence_id = data.get('sentence_id')
-        annotator_username = request.current_user['username'] 
 
-        if not sentence_id:
-            return jsonify({"error": "Missing sentence ID"}), 400
-
-        print(f"DEBUG: Submitting sentence {sentence_id} for review by {annotator_username}")
-
-        # First, verify the sentence exists and belongs to the annotator
-        sentence = sentences_collection.find_one({
-            "_id": ObjectId(sentence_id), 
-            "username": annotator_username
-        })
-        
-        if not sentence:
-            print(f"DEBUG: Sentence {sentence_id} not found or not assigned to user {annotator_username}")
-            return jsonify({"message": "Sentence not found or not assigned to this user"}), 404
-
-        # Move all approved tags for this sentence to staged_tags with pending status
-        approved_tags = list(tags_collection.find({
-            "source_sentence_id": sentence_id,
-            "username": annotator_username
-        }))
-        
-        if approved_tags:
-            # Convert approved tags to staged tags with pending status
-            staged_tags_to_insert = []
-            for tag in approved_tags:
-                staged_tag = {
-                    'tag': tag.get('tag'),
-                    'source_sentence_id': tag.get('source_sentence_id'),
-                    'username': tag.get('username'),
-                    'text': tag.get('text'),
-                    'annotation_date': tag.get('annotation_date'),
-                    'review_status': 'Pending',
-                    'status': 'Staged/Pending Review',
-                    'original_tag_id': str(tag['_id'])  # Keep reference to original
-                }
-                staged_tags_to_insert.append(staged_tag)
-            
-            # Insert into staged_tags
-            if staged_tags_to_insert:
-                staged_tags_collection.insert_many(staged_tags_to_insert)
-                
-            # Remove from approved tags
-            tags_collection.delete_many({
-                "source_sentence_id": sentence_id,
-                "username": annotator_username
-            })
-            search_tags_collection.delete_many({
-                "source_sentence_id": sentence_id, 
-                "username": annotator_username
-            })
-
-        # Update the Sentence status to PENDING_REVIEW
-        result = sentences_collection.update_one(
-            {"_id": ObjectId(sentence_id), "username": annotator_username},
-            {"$set": {
-                "review_status": "PENDING_REVIEW",
-                "submission_date": get_ist_time()
-            }}
-        )
-
-        if result.matched_count == 0:
-            print(f"DEBUG: No sentence matched for update: {sentence_id}")
-            return jsonify({"message": "Sentence not found or not assigned to this user"}), 404
-        
-        print(f"DEBUG: Successfully submitted sentence {sentence_id} for review")
-        log_action_and_update_report(annotator_username, f'Submitted sentence {sentence_id} for review.')
-
-        return jsonify({"message": f"Sentence {sentence_id} submitted successfully for review."}), 200
-
-    except Exception as e:
-        print(f"Error submitting sentence for review: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": "Internal server error during submission"}), 500
 
 @app.route('/api/reviewer/pending_sentences', methods=['GET'])
 @token_required
@@ -5351,51 +5730,51 @@ def get_pending_sentences():
     Endpoint 2: Reviewer Dashboard Fetch - Pulls ONLY sentences that have been submitted for review.
     """
     try:
-        # ONLY match sentences that have been explicitly submitted for review
-        pipeline = [
-            {"$match": {
-                "review_status": "PENDING_REVIEW"  # ONLY get sentences explicitly submitted for review
-            }},
-            
-            # Fetch Project Name
-            {"$lookup": {
-                "from": "projects",
-                "localField": "project_id",
-                "foreignField": "_id",
-                "as": "project_info"
-            }},
-            {"$unwind": {"path": "$project_info", "preserveNullAndEmptyArrays": True}},
-            
-            {"$sort": {"submission_date": 1, "_id": 1}},
-            
-            # Project fields to match the frontend structure
-            {"$project": {
-                "id": {"$toString": "$_id"},
-                "sentence_text": "$textContent",
-                "annotatorUsername": "$username",
-                "projectId": {"$toString": "$project_id"},
-                "project_name": "$project_info.name",
-                "isAnnotated": "$is_annotated",
-                "review_status": "$review_status",
-                "submission_date": "$submission_date"
-            }}
-        ]
+        # Get pending sentences first (simpler approach)
+        pending_sentences_cursor = sentences_collection.find({
+            "review_status": "PENDING_REVIEW"
+        }).sort("submission_date", 1)
         
-        pending_sentences = list(sentences_collection.aggregate(pipeline))
+        pending_sentences = []
         
-        print(f"DEBUG: Found {len(pending_sentences)} sentences explicitly submitted for review")
-        
-        # Clean up the results to ensure all ObjectIds are converted to strings
-        for sentence in pending_sentences:
-            for key in list(sentence.keys()):
-                if isinstance(sentence[key], ObjectId):
-                    sentence[key] = str(sentence[key])
+        for sentence in pending_sentences_cursor:
+            # Convert all fields to JSON-serializable types
+            sentence_data = {
+                "id": str(sentence["_id"]),
+                "sentence_text": sentence.get("textContent", ""),
+                "annotatorUsername": sentence.get("username", ""),
+                "projectId": sentence.get("project_id", ""),
+                "project_name": "N/A",  # Default value
+                "isAnnotated": sentence.get("is_annotated", False),
+                "review_status": sentence.get("review_status", ""),
+                "submission_date": sentence.get("submission_date").isoformat() if sentence.get("submission_date") else None
+            }
+            
+            # Look up project name
+            project_id = sentence.get("project_id")
+            if project_id:
+                try:
+                    project = projects_collection.find_one({"_id": ObjectId(project_id)})
+                    if project:
+                        sentence_data["project_name"] = project.get("name", "N/A")
+                except:
+                    try:
+                        project = projects_collection.find_one({"_id": project_id})
+                        if project:
+                            sentence_data["project_name"] = project.get("name", "N/A")
+                    except:
+                        pass  # Keep default "N/A"
+            
+            pending_sentences.append(sentence_data)
         
         # Enhanced tag retrieval - get both staged AND approved tags
         sentence_ids = [s['id'] for s in pending_sentences]
         
         # Get staged tags (pending review)
-        staged_tags_cursor = staged_tags_collection.find({"source_sentence_id": {"$in": sentence_ids}})
+        staged_tags_cursor = staged_tags_collection.find({
+            "source_sentence_id": {"$in": sentence_ids},
+            "review_status": "Pending"  # Only get pending tags
+        })
         staged_tag_map = {}
         for tag in staged_tags_cursor:
             sid = tag['source_sentence_id']
@@ -5407,7 +5786,7 @@ def get_pending_sentences():
                 'tag': tag.get('tag', ''),
                 'username': tag.get('username', ''),
                 'review_status': tag.get('review_status', 'Pending'),
-                'annotation_date': tag.get('annotation_date'),
+                'annotation_date': tag.get('annotation_date').isoformat() if tag.get('annotation_date') else None,
                 'source': 'staged'
             }
             staged_tag_map[sid].append(tag_data)
@@ -5425,9 +5804,9 @@ def get_pending_sentences():
                 'tag': tag.get('tag', ''),
                 'username': tag.get('username', ''),
                 'review_status': tag.get('review_status', 'Approved'),
-                'annotation_date': tag.get('annotation_date'),
+                'annotation_date': tag.get('annotation_date').isoformat() if tag.get('annotation_date') else None,
                 'reviewed_by': tag.get('reviewed_by', ''),
-                'reviewed_at': tag.get('reviewed_at'),
+                'reviewed_at': tag.get('reviewed_at').isoformat() if tag.get('reviewed_at') else None,
                 'source': 'approved'
             }
             approved_tag_map[sid].append(tag_data)
@@ -5441,9 +5820,6 @@ def get_pending_sentences():
             if sid in staged_tag_map:
                 all_tags.extend(staged_tag_map[sid])
             
-            # Add approved tags  
-            if sid in approved_tag_map:
-                all_tags.extend(approved_tag_map[sid])
             
             sentence['tags'] = all_tags
             print(f"DEBUG: Sentence {sid} has {len(all_tags)} tags ({len(staged_tag_map.get(sid, []))} staged, {len(approved_tag_map.get(sid, []))} approved)")
@@ -5455,7 +5831,7 @@ def get_pending_sentences():
         import traceback
         traceback.print_exc()
         return jsonify({"error": "Internal server error during queue fetch"}), 500
-      
+        
 @app.route('/api/sentence/review_action', methods=['POST'])
 @token_required
 def review_action():
@@ -5472,6 +5848,7 @@ def review_action():
         
         print(f"DEBUG REVIEW_ACTION: Starting for sentence {sentence_id}, action: {action}")
         print(f"DEBUG REVIEW_ACTION: Comment: {comment}")
+        print(f"DEBUG REVIEW_ACTION: Full request data: {data}")
         
         sentence = sentences_collection.find_one({"_id": ObjectId(sentence_id)})
         
@@ -5508,7 +5885,6 @@ def review_action():
             )
             log_reviewer_action(reviewer_username, f"Approved sentence {sentence_id}", annotator_username)
             
-            
         elif action == 'Reject':
             if not comment.strip():
                 return jsonify({"error": "Review comment is mandatory for rejection"}), 400
@@ -5516,12 +5892,14 @@ def review_action():
             new_status = 'REVIEWED_REJECTED'
             
             print(f"DEBUG REVIEW_ACTION: Processing rejection for sentence {sentence_id}")
+            print(f"DEBUG REVIEW_ACTION: Comment to be saved: '{comment}'")
             
             # 1. Update sentence status
-            sentences_collection.update_one(
+            update_result = sentences_collection.update_one(
                 {"_id": ObjectId(sentence_id)},
                 {"$set": {"review_status": new_status, "reviewed_by": reviewer_username, "review_date": get_ist_time()}}
             )
+            print(f"DEBUG REVIEW_ACTION: Sentence update result: {update_result.modified_count} documents modified")
             
             # 2. Log the rejection comment (Revision Note)
             revision_note_data = {
@@ -5536,6 +5914,10 @@ def review_action():
             print(f"DEBUG REVIEW_ACTION: Inserting revision note: {revision_note_data}")
             revision_result = revision_notes_collection.insert_one(revision_note_data)
             print(f"DEBUG REVIEW_ACTION: Revision note inserted with ID: {revision_result.inserted_id}")
+            
+            # Verify the note was inserted
+            inserted_note = revision_notes_collection.find_one({"_id": revision_result.inserted_id})
+            print(f"DEBUG REVIEW_ACTION: Verified inserted note: {inserted_note is not None}")
             
             # 3. Mark all staged tags for this sentence as Rejected
             staged_update_result = staged_tags_collection.update_many(
@@ -5557,6 +5939,103 @@ def review_action():
         import traceback
         traceback.print_exc()
         return jsonify({"error": "Internal server error during review finalization"}), 500
+
+
+@app.route('/api/tag/<tag_id>/submit_for_review', methods=['POST'])
+@token_required
+def submit_tag_for_review(tag_id):
+    """Submit individual tag for review"""
+    try:
+        data = request.get_json()
+        current_user = request.current_user
+        annotator_username = current_user['username']
+
+        # Get the tag
+        tag = tags_collection.find_one({"_id": ObjectId(tag_id)})
+        if not tag:
+            return jsonify({"error": "Tag not found"}), 404
+
+        # Verify the tag belongs to the current user
+        if tag.get('username') != annotator_username:
+            return jsonify({"error": "Unauthorized access to tag"}), 403
+
+        # Move tag to staged_tags with pending status
+        staged_tag = {
+            'tag': tag.get('tag'),
+            'source_sentence_id': tag.get('source_sentence_id'),
+            'username': tag.get('username'),
+            'text': tag.get('text'),
+            'annotation_date': tag.get('annotation_date'),
+            'review_status': 'Pending',
+            'status': 'Staged/Pending Review',
+            'original_tag_id': str(tag['_id'])
+        }
+
+        # Insert into staged_tags
+        staged_tags_collection.insert_one(staged_tag)
+        
+        # Remove from approved tags
+        tags_collection.delete_one({"_id": ObjectId(tag_id)})
+        search_tags_collection.delete_one({"_id": ObjectId(tag_id)})
+
+        # Update sentence review status if needed
+        update_sentence_review_status(tag.get('source_sentence_id'))
+
+        log_action_and_update_report(annotator_username, f'Submitted tag "{tag.get("text")}" for review.')
+        
+        return jsonify({"message": "Tag submitted for review successfully"}), 200
+
+    except Exception as e:
+        print(f"Error submitting tag for review: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+@app.route('/api/tag/<tag_id>/cancel_review', methods=['POST'])
+@token_required
+def cancel_tag_review(tag_id):
+    """Cancel review request for individual tag"""
+    try:
+        data = request.get_json()
+        current_user = request.current_user
+        annotator_username = current_user['username']
+
+        # Get the staged tag
+        staged_tag = staged_tags_collection.find_one({"_id": ObjectId(tag_id)})
+        if not staged_tag:
+            return jsonify({"error": "Tag not found in review queue"}), 404
+
+        # Verify the tag belongs to the current user
+        if staged_tag.get('username') != annotator_username:
+            return jsonify({"error": "Unauthorized access to tag"}), 403
+
+        # Move tag back to approved tags
+        approved_tag = {
+            'tag': staged_tag.get('tag'),
+            'source_sentence_id': staged_tag.get('source_sentence_id'),
+            'username': staged_tag.get('username'),
+            'text': staged_tag.get('text'),
+            'annotation_date': staged_tag.get('annotation_date'),
+            'review_status': 'Approved',
+            'reviewed_by': 'auto_approved',
+            'reviewed_at': get_ist_time()
+        }
+
+        # Insert back into approved tags
+        tags_collection.insert_one(approved_tag)
+        search_tags_collection.insert_one(approved_tag)
+        
+        # Remove from staged tags
+        staged_tags_collection.delete_one({"_id": ObjectId(tag_id)})
+
+        # Update sentence review status
+        update_sentence_review_status(staged_tag.get('source_sentence_id'))
+
+        log_action_and_update_report(annotator_username, f'Cancelled review request for tag "{staged_tag.get("text")}".')
+        
+        return jsonify({"message": "Tag review request cancelled successfully"}), 200
+
+    except Exception as e:
+        print(f"Error cancelling tag review: {e}")
+        return jsonify({"error": "Internal server error"}), 500
     
 @app.route('/api/annotator/revision_notes/<string:username>', methods=["GET"])
 @token_required
@@ -5574,14 +6053,13 @@ def get_revision_notes(username):
         
         revision_notes = []
         
-        # Get all unacknowledged revision notes for this user
+        # Get ALL revision notes for this user (both acknowledged and unacknowledged)
         notes_cursor = revision_notes_collection.find({
-            "annotator_username": username,
-            "acknowledged": False
-        })
+            "annotator_username": username
+        }).sort("rejection_date", -1)  # Sort by most recent first
         
         notes_list = list(notes_cursor)
-        print(f"DEBUG REVISION_NOTES: Found {len(notes_list)} unacknowledged revision notes")
+        print(f"DEBUG REVISION_NOTES: Found {len(notes_list)} total revision notes for user {username}")
         
         for note in notes_list:
             sentence_id = note.get('sentence_id')
@@ -5594,13 +6072,33 @@ def get_revision_notes(username):
                     print(f"DEBUG REVISION_NOTES: Sentence {sentence_id} not found, skipping")
                     continue
                 
-                # Get rejected tags for this sentence
-                rejected_tags_cursor = staged_tags_collection.find({
+                # Get rejected tags for this sentence - BOTH from revision notes and staged_tags
+                rejected_tags = []
+                
+                # Get tags from staged_tags collection
+                staged_rejected_tags = list(staged_tags_collection.find({
                     "source_sentence_id": sentence_id,
                     "username": username,
                     "review_status": "Rejected"
-                })
-                rejected_tags = list(rejected_tags_cursor)
+                }))
+                
+                # Also include tag-specific rejection from revision notes
+                if note.get('tag_id'):
+                    # This is a specific tag rejection
+                    rejected_tags.append({
+                        'tag': note.get('rejected_tag_type', 'Unknown'),
+                        'text': note.get('rejected_tag_text', ''),
+                        'is_specific_tag': True
+                    })
+                else:
+                    # This is a sentence-level rejection - get all rejected tags
+                    for tag in staged_rejected_tags:
+                        rejected_tags.append({
+                            'tag': tag.get('tag', ''),
+                            'text': tag.get('text', ''),
+                            'is_specific_tag': False
+                        })
+                
                 print(f"DEBUG REVISION_NOTES: Found {len(rejected_tags)} rejected tags for sentence {sentence_id}")
                 
                 # Get the project name
@@ -5612,15 +6110,25 @@ def get_revision_notes(username):
                             project_name = project.get('name', 'Unknown Project')
                     except Exception as e:
                         print(f"DEBUG REVISION_NOTES: Error fetching project: {e}")
+                        # Try alternative approach for project ID
+                        try:
+                            project = projects_collection.find_one({"_id": sentence.get('project_id')})
+                            if project:
+                                project_name = project.get('name', 'Unknown Project')
+                        except:
+                            pass
                 
                 revision_note_data = {
                     "sentenceId": sentence_id,
                     "sentenceText": sentence.get('textContent', ''),
                     "projectName": project_name,
-                    "rejectedTags": [tag.get('tag', '') for tag in rejected_tags],
+                    "rejectedTags": rejected_tags,
                     "reviewerComment": note.get('revision_comment', ''),
                     "reviewer": note.get('reviewer_username', ''),
-                    "rejectionDate": note.get('rejection_date').strftime('%Y-%m-%d %H:%M:%S') if note.get('rejection_date') else 'Unknown date'
+                    "rejectionDate": note.get('rejection_date').strftime('%Y-%m-%d %H:%M:%S') if note.get('rejection_date') else 'Unknown date',
+                    "acknowledged": note.get('acknowledged', False),
+                    "noteId": str(note.get('_id')),  # Include the revision note ID
+                    "rejectionType": "tag" if note.get('tag_id') else "sentence"
                 }
                 
                 revision_notes.append(revision_note_data)
@@ -5628,6 +6136,8 @@ def get_revision_notes(username):
                 
             except Exception as e:
                 print(f"DEBUG REVISION_NOTES: Error processing note for sentence {sentence_id}: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
         
         print(f"DEBUG REVISION_NOTES: Returning {len(revision_notes)} revision notes for user {username}")
@@ -5638,7 +6148,7 @@ def get_revision_notes(username):
         import traceback
         traceback.print_exc()
         return jsonify({"error": "Internal server error during revision notes fetch"}), 500
-       
+    
 @app.route('/api/annotator/acknowledge_revision', methods=['POST'])
 @token_required
 def acknowledge_revision():

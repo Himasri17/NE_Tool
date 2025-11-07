@@ -1,4 +1,3 @@
-// Update AdminDashboard.js - Fix the fetchData initialization issue
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
@@ -12,11 +11,11 @@ import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import DeleteIcon from '@mui/icons-material/Delete';
+import ForwardToInboxTwoToneIcon from '@mui/icons-material/ForwardToInboxTwoTone';
 import EditIcon from '@mui/icons-material/Edit';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
-import MarkEmailReadIcon from '@mui/icons-material/MarkEmailRead'; 
 import CloseIcon from '@mui/icons-material/Close';
 import CreateProjectModal from './Createprojectmodal';
 import AssignUsersDialog from './AssignUsersDialog';
@@ -263,9 +262,12 @@ export default function AdminDashboard() {
         }
     };
 
-    // UPDATED: Assign user handler
-    const handleAssignUser = (projectId, projectName) => {
-        setSelectedProject({ id: projectId, name: projectName });
+    const handleAssignUser = (projectId, projectName, projectLanguage) => {
+        setSelectedProject({ 
+            id: projectId, 
+            name: projectName,
+            language: projectLanguage 
+        });
         setAssignDialogOpen(true);
     };
 
@@ -294,6 +296,8 @@ export default function AdminDashboard() {
         setEditDialogOpen(false);
         showSnackbar('Project updated successfully!', 'success');
     };
+
+    
 
     const handleMarkReviewed = async (feedbackId) => {
         try {
@@ -508,7 +512,7 @@ export default function AdminDashboard() {
                             <MenuItem 
                                 onClick={() => { 
                                     handleMenuClose(); 
-                                    handleAssignUser(project.id, project.name); 
+                                    handleAssignUser(project.id, project.name,project.language); 
                                 }}
                             >
                                 <PersonAddIcon fontSize="small" sx={{ mr: 1 }} /> 
@@ -631,15 +635,15 @@ export default function AdminDashboard() {
                                         <TableCell>{fb.email}</TableCell>
                                         <TableCell sx={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                             <Tooltip title={fb.feedback} placement="bottom-start">
-                                                <span>{fb.feedback}</span>
+                                                <span>{fb.feedback_text}</span>
                                             </Tooltip>
                                         </TableCell>
                                         <TableCell align="center">
-                                            {fb.file && fb.file !== 'None' ? (
-                                                <Tooltip title={`Click to view: ${fb.file}`} placement="top">
+                                            {fb.file_path && fb.file_path !== 'None' ? (
+                                                <Tooltip title={`Click to view: ${fb.file_path}`} placement="top">
                                                     <IconButton 
                                                         size="small"
-                                                        onClick={() => handleImagePreview(fb.file)}
+                                                        onClick={() => handleImagePreview(fb.file_path)}
                                                         color="primary"
                                                     >
                                                         <CloudDownloadIcon fontSize="small" />
@@ -658,13 +662,13 @@ export default function AdminDashboard() {
                                         </TableCell>
                                         <TableCell align="center">
                                             {!fb.is_reviewed && (
-                                                <Tooltip title="Mark as Reviewed">
+                                                <Tooltip title="Review and forward">
                                                     <IconButton 
                                                         size="small" 
                                                         color="success" 
                                                         onClick={() => handleMarkReviewed(fb.id)}
                                                     >
-                                                        <MarkEmailReadIcon fontSize="small" />
+                                                        <ForwardToInboxTwoToneIcon fontSize="small" />
                                                     </IconButton>
                                                 </Tooltip>
                                             )}
@@ -743,7 +747,7 @@ export default function AdminDashboard() {
                         gap: 2
                     }}>
                         
-                        {/* Search Bar & NER Type */}
+                        {/* Search Bar & MWE Type */}
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
                             <TextField 
                                 variant="outlined" 
@@ -880,7 +884,7 @@ export default function AdminDashboard() {
                     </Button>
                 </Container>
                 <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 2 }}>
-                    © {new Date().getFullYear()} NER Annotation Platform. All rights reserved.
+                    © {new Date().getFullYear()} MWE Annotation Platform. All rights reserved.
                 </Typography>
             </Box>
 
@@ -898,6 +902,7 @@ export default function AdminDashboard() {
                 onClose={handleAssignDialogClose}
                 projectId={selectedProject?.id}
                 projectName={selectedProject?.name}
+                 projectLanguage={selectedProject?.language} 
                 adminUsername={username}
             />
 

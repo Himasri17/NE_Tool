@@ -187,7 +187,7 @@ export default function FeedbackDialog({ open, onClose, userEmail }) {
                 </DialogTitle>
                 <DialogContent dividers>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        Submitting as: **{userEmail || 'Loading user...'}**.
+                        Submitting as: **{userEmail || 'userEmail'}**.
                     </Typography>
                     <TextField
                         fullWidth

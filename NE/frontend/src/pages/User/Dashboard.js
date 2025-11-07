@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useParams, useNavigate} from "react-router-dom";
 import {
     Container, Typography, TextField, Button, Box, List, ListItem, ListItemText,
     Paper, Dialog, DialogActions, DialogContent, Divider, ListItemIcon,
     DialogContentText, DialogTitle, Chip, CircularProgress, 
-    Grid, LinearProgress, Card, CardContent ,FormControl, InputLabel, Select, MenuItem, useTheme, Alert,
+    Grid, LinearProgress, Card, CardContent ,FormControl, InputLabel, Select, MenuItem, useTheme, Alert,Tooltip,
     Drawer, IconButton, Badge 
 } from "@mui/material";
 import FeedbackIcon from '@mui/icons-material/Feedback'; 
@@ -20,7 +20,7 @@ import { getToken, removeToken } from '../../components/authUtils'; // <-- FIXED
 
 
 import FeedbackDialog from './FeedbackDialog'; // <-- FIXED PATH
-import { SentencesRevisionNotesDialog } from './SentencesRevisionNotesDialog';//<-- FIXED PATH
+import { SentencesRevisionNotesDialog } from './SentencesRevisionNotesDialog'; // <-- FIXED PATH
 
 const API_BASE_URL = 'http://127.0.0.1:5001';
 
@@ -29,7 +29,6 @@ export default function Dashboard() {
     const { username } = useParams();
     const navigate = useNavigate();
     const theme = useTheme();
-    const location = useLocation();
 
     // --- State Management ---
     const [userData, setUserData] = useState(null);
@@ -46,6 +45,7 @@ export default function Dashboard() {
     const [deleteConfirmation, setDeleteConfirmation] = useState({ isOpen: false, sentenceId: null });
     const [bulkUploadDialog, setBulkUploadDialog] = useState(false);
     const [file, setFile] = useState(null);
+    const [tagReviewStatus, setTagReviewStatus] = useState({});
     const [bulkTag, setBulkTag] = useState('');
     const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
     const [tagRecommendations, setTagRecommendations] = useState([]);
@@ -69,23 +69,23 @@ export default function Dashboard() {
     const [searchTerm, setSearchTerm] = useState('');
     const [matchedTag, setMatchedTag] = useState(null);
     
-    // NEW: Tag structure with main tags and subtypes
-    const TAG_STRUCTURE = {
-        "TIMEX": ["Time", "Date", "Day"],
-        "NUMEX": ["Currency", "Measurement", "Cardinal"],
-        "ENAMEX": ["Person", "Organisation", "Location", "Facilities", "Artifacts"],
-    };
 
-    // Helper function to get all possible tag combinations
-    const getAllTagOptions = () => {
-        const options = [];
-        Object.entries(TAG_STRUCTURE).forEach(([mainTag, subtypes]) => {
-            subtypes.forEach(subtype => {
-                options.push(`${mainTag}_${subtype}`);
-            });
-        });
-        return options;
+    const TAG_STRUCTURE = {
+    "TIMEX": ["Time", "Date", "Day"],
+    "NUMEX": ["Currency", "Measurement", "Cardinal"],
+    "ENAMEX": ["Person", "Organisation", "Location", "Facilities", "Artifacts"],
     };
+    
+    const HIERARCHICAL_TAGS = Object.entries(TAG_STRUCTURE).flatMap(([mainTag, subtypes]) =>
+        subtypes.map(subtype => `${mainTag}_${subtype}`)
+    );
+    const PREDEFINED_TAGS = [
+            "Noun Compound",
+            "Reduplicated", 
+            "Echo",
+            "Opaque",
+            "Opaque-Idiom"
+    ];
 
     // --- PROJECT STATES ---
     const [selectedProject, setSelectedProject] = useState(null); 
@@ -110,6 +110,7 @@ export default function Dashboard() {
         const isLogoutEndpoint = url.includes('/logout');
         
         if (!token && !isLogoutEndpoint) {
+            removeToken();
             navigate("/");
             return null;
         }
@@ -140,46 +141,12 @@ export default function Dashboard() {
         } catch (error) {
             // For logout endpoint, don't navigate away on network errors
             if (!isLogoutEndpoint) {
-                removeToken();
-                navigate("/");
+                // removeToken(); // Don't remove token immediately on network error, only on 401
+                // navigate("/");
             }
             return null;
         }
     };
-
-    const fetchTags = useCallback(async () => {
-        try {
-            console.log("DEBUG: Starting to fetch tags for user:", username);
-            const res = await fetchWithAuth(`http://127.0.0.1:5001/tags/${username}`);
-            if (!res) return; // Authentication failed
-            
-            if (!res.ok) throw new Error("Failed to fetch tags");
-            
-            const tagsData = await res.json();
-            console.log("DEBUG: Tags fetched from server:", tagsData);
-            console.log("DEBUG: Number of tags received:", tagsData.length);
-            
-            setTags(tagsData);
-        } catch (err) { 
-            console.error("Error fetching tags:", err); 
-        }
-    }, [username]);
-
-    useEffect(() => {
-        if (selectedSentence && tags.length > 0) {
-            const filteredTags = tags.filter(tag => {
-                const matches = tag.source_sentence_id === selectedSentence._id;
-                console.log(`Filtering tag ${tag._id} for sentence ${selectedSentence._id}: ${matches}`);
-                return matches;
-            });
-            console.log("Setting currentSentenceTags to:", filteredTags);
-            setCurrentSentenceTags(filteredTags);
-        } else {
-            console.log("Clearing currentSentenceTags");
-            setCurrentSentenceTags([]);
-        }
-    }, [selectedSentence, tags]);
-
 
     const handleNavigateToSentence = async (sentenceId) => {
         try {
@@ -214,7 +181,7 @@ export default function Dashboard() {
                     }
                 }, 100);
                 
-                console.log(`Navigated to sentence: ${sentenceId}`);
+                console.log(`Mapsd to sentence: ${sentenceId}`);
             } else {
                 console.warn(`Sentence ${sentenceId} not found in current view`);
                 alert('Sentence not found in current project. Please check the project selection.');
@@ -224,12 +191,17 @@ export default function Dashboard() {
             alert('Error navigating to sentence. Please try manually finding it in the list.');
         }
     };
+    const isHierarchicalTag = (tag) => {
+    return HIERARCHICAL_TAGS.includes(tag);
+    };
+
 
     useEffect(() => {
         const fetchRevisionNotesCount = async () => {
             if (!username) return;
             
             try {
+                console.log("DEBUG: Fetching revision notes for user:", username);
                 const response = await fetchWithAuth(`${API_BASE_URL}/api/annotator/revision_notes/${username}`, {
                     headers: {
                         'Content-Type': 'application/json'
@@ -238,6 +210,8 @@ export default function Dashboard() {
 
                 if (response && response.ok) {
                     const notes = await response.json();
+                    console.log("DEBUG: Received revision notes:", notes);
+                    console.log("DEBUG: Number of revision notes:", notes.length);
                     setRevisionList(notes);
                 } else if (response) {
                     console.error('Failed to fetch revision notes:', response.status);
@@ -252,52 +226,97 @@ export default function Dashboard() {
         return () => clearInterval(interval);
     }, [username]);
 
-    const loadAllUserTasks = useCallback(async (setLoading = true) => {
-        if (setLoading) setIsLoading(true);
+    const fetchTags = useCallback(async () => {
         try {
-            const res = await fetchWithAuth(`http://127.0.0.1:5001/sentences/${username}`);
+            console.log("DEBUG: Starting to fetch tags for user:", username);
+            const res = await fetchWithAuth(`http://127.0.0.1:5001/tags/${username}`);
             if (!res) return; // Authentication failed
             
-            if (!res.ok) throw new Error("Failed to fetch all user tasks.");
-            const data = await res.json();
+            if (!res.ok) throw new Error("Failed to fetch tags");
             
-            const projects = data.project_tasks || [];
-            setProjectTasks(projects);
+            const tagsData = await res.json();
+            console.log("DEBUG: Tags fetched from server:", tagsData);
+            console.log("DEBUG: Number of tags received:", tagsData.length);
             
-            // Determine initial view (Project is prioritized)
-            let initialProject = null;
-            if (projects.length > 0) {
-                initialProject = projects.find(p => p.completed < p.total);
-                if (!initialProject) {
-                    initialProject = projects[0]; 
-                }
-            }
-
-            // Set initial visibility based on selection
-            if (initialProject) {
-                setSelectedProject(initialProject);
-                setProjectName(initialProject.project_name);
-                setAllSentences(initialProject.sentences || []);
-            } else {
-                setSelectedProject(null);
-                setProjectName(projects.length > 0 ? "No Unfinished Tasks Selected" : "No Assigned Projects");
-                setAllSentences([]); 
-                setVisibleSentences([]); 
-            }
-            
-            setSelectedSentence(null); 
-            setSearchTerm(''); 
-            
+            setTags(tagsData);
         } catch (err) { 
-            console.error("Error loading user tasks:", err); 
-            setProjectTasks([]);
-            setAllSentences([]);
-            setVisibleSentences([]);
-        } finally {
-            if (setLoading) setIsLoading(false);
+            console.error("Error fetching tags:", err); 
         }
     }, [username]);
 
+    useEffect(() => {
+        if (selectedSentence && tags.length > 0) {
+            const filteredTags = tags.filter(tag => {
+                const matches = tag.source_sentence_id === selectedSentence._id;
+                console.log(`Filtering tag ${tag._id} for sentence ${selectedSentence._id}: ${matches}`);
+                return matches;
+            });
+            console.log("Setting currentSentenceTags to:", filteredTags);
+            setCurrentSentenceTags(filteredTags);
+        } else {
+            console.log("Clearing currentSentenceTags");
+            setCurrentSentenceTags([]);
+        }
+    }, [selectedSentence, tags]);
+
+    const loadAllUserTasks = useCallback(async (setLoading = true, preserveCurrentProject = false) => {
+    if (setLoading) setIsLoading(true);
+    try {
+        const res = await fetchWithAuth(`http://127.0.0.1:5001/sentences/${username}`);
+        if (!res) return; // Authentication failed
+        
+        if (!res.ok) throw new Error("Failed to fetch all user tasks.");
+        const data = await res.json();
+        
+        const projects = data.project_tasks || [];
+        setProjectTasks(projects);
+        
+        let initialProject = null;
+        
+        // If we want to preserve the current project, use the existing selectedProject
+        if (preserveCurrentProject && selectedProject) {
+            // Find the updated version of the current project
+            const currentProjectInList = projects.find(p => p.project_name === selectedProject.project_name);
+            if (currentProjectInList) {
+                initialProject = currentProjectInList;
+            }
+        }
+        
+        // If no current project to preserve or it wasn't found, use the original logic
+        if (!initialProject && projects.length > 0) {
+            initialProject = projects.find(p => p.completed < p.total);
+            if (!initialProject) {
+                initialProject = projects[0]; 
+            }
+        }
+
+        // Set initial visibility based on selection
+        if (initialProject) {
+            setSelectedProject(initialProject);
+            setProjectName(initialProject.project_name);
+            setAllSentences(initialProject.sentences || []);
+        } else {
+            setSelectedProject(null);
+            setProjectName(projects.length > 0 ? "No Unfinished Tasks Selected" : "No Assigned Projects");
+            setAllSentences([]); 
+            setVisibleSentences([]); 
+        }
+        
+        // Only clear selected sentence if we're switching projects
+        if (!preserveCurrentProject || !selectedProject) {
+            setSelectedSentence(null); 
+        }
+        setSearchTerm(''); 
+        
+    } catch (err) { 
+        console.error("Error loading user tasks:", err); 
+        setProjectTasks([]);
+        setAllSentences([]);
+        setVisibleSentences([]);
+    } finally {
+        if (setLoading) setIsLoading(false);
+    }
+}, [username]); // REMOVE selectedProject from dependencies
 
     useEffect(() => {
         const loadData = async () => {
@@ -318,8 +337,8 @@ export default function Dashboard() {
     useEffect(() => {
         const fetchUserData = async () => {
             try {
-                const res = await fetch(`http://127.0.0.1:5001/api/user/${username}`);
-                if (res.ok) {
+                const res = await fetchWithAuth(`http://127.0.0.1:5001/api/user/${username}`);
+                if (res && res.ok) {
                     const data = await res.json();
                     setUserData(data);
                 }
@@ -462,7 +481,7 @@ export default function Dashboard() {
                 body: JSON.stringify({ text: text })
             });
 
-            if (!response) return;
+            if (!response) return; // Authentication failed
 
             if (response.ok) {
                 const data = await response.json();
@@ -494,7 +513,7 @@ export default function Dashboard() {
         setSearchTerm(event.target.value);
     };
 
-     const handleOpenStats = async () => {
+      const handleOpenStats = async () => {
         setIsLoadingStats(true);
         setStatsDialogOpen(true);
         
@@ -520,11 +539,11 @@ export default function Dashboard() {
     const handleSelectProject = (project) => {
     setSelectedProject(project);
     setSelectedSentence(null);
-    setNewSelection({ isActive: false, text: '', mainTag: '', subtype: '' });
-    setEditingTag({ isActive: false, _id: null, text: '', mainTag: '', subtype: '' });
+    setNewSelection({ isActive: false, text: '', tag: '' });
+    setEditingTag({ isActive: false, _id: null, text: '', tag: '' });
     setSearchTerm(''); // Clear search on project switch
     setMatchedTag(null); // Clear tag match on project switch
-    isInitialLoad.current = true;
+    isInitialLoad.current = true; // Reset for new project
     
     // Log project selection
     if (project) {
@@ -545,39 +564,52 @@ export default function Dashboard() {
             setProjectName(fullProject.project_name);
         }
     }
-};
+};  
 
     const handleSelectionEvent = (sentence) => {
     const highlightedText = window.getSelection().toString().trim();
     setSelectedSentence(sentence);
-    setEditingTag({ isActive: false, _id: null, text: '', mainTag: '', subtype: '' });
+    setEditingTag({ isActive: false, _id: null, text: '', tag: '' });
 
     // Log sentence selection
     logUserAction(`Selected sentence for annotation`);
 
+    // ✅ Only trigger tag creation if user actually highlighted text (not just clicked)
+    if (!highlightedText || window.getSelection().type !== "Range") {
+        setNewSelection({ isActive: false, text: '', tag: '' });
+        setTagRecommendations([]);
+        setShowRecommendations(false);
+        return;
+    }
+
+    // If actual text is selected, continue with tag suggestion logic
     if (highlightedText.length > 0 && !editingSentence.isActive) {
-        setNewSelection({ 
-            isActive: true, 
-            text: highlightedText, 
-            mainTag: 'ENAMEX', 
-            subtype: 'Person' 
-        });
-        
+        let suggestion = "Noun Compound";
+        const lowerCaseText = highlightedText.toLowerCase();
+        const existingTag = tags.find(t => t.text.toLowerCase() === lowerCaseText);
+
+        if (existingTag) {
+            suggestion = existingTag.tag;
+        }
+
+        setNewSelection({ isActive: true, text: highlightedText, tag: suggestion });
+
         // Immediately check for auto-detected tags from current sentence
         const autoDetectedTags = findAutoDetectedTags(sentence, highlightedText);
         if (autoDetectedTags.length > 0) {
             setTagRecommendations(autoDetectedTags);
             setShowRecommendations(true);
         }
-        
+
         // Then fetch API recommendations
         fetchTagRecommendations(highlightedText);
     } else {
-        setNewSelection({ isActive: false, text: '', mainTag: '', subtype: '' });
+        setNewSelection({ isActive: false, text: '', tag: '' });
         setTagRecommendations([]);
         setShowRecommendations(false);
     }
 };
+
 
     // Add this helper function
     const findAutoDetectedTags = (sentence, highlightedText) => {
@@ -606,14 +638,9 @@ export default function Dashboard() {
     };
 
     const handleSelectRecommendation = (recommendation) => {
-    // Parse the recommended tag (assuming it comes in "maintag_subtype" format)
-    const [mainTag, ...subtypeParts] = recommendation.recommended_tag.split('_');
-    const subtype = subtypeParts.join('_');
-    
     setNewSelection(prev => ({
         ...prev,
-        mainTag: mainTag || 'ENAMEX',
-        subtype: subtype || 'Person'
+        tag: recommendation.recommended_tag
     }));
     setShowRecommendations(false);
     
@@ -623,31 +650,46 @@ export default function Dashboard() {
 
 
    const handleSaveNewTag = async () => {
-    if (!selectedSentence || !newSelection.text.trim() || !newSelection.mainTag || !newSelection.subtype) {
-        return alert("Please provide text, main tag, and subtype.");
+    if (!selectedSentence || !newSelection.text.trim() || !newSelection.tag.trim()) {
+        return alert("Please provide both text and a tag label.");
     }
-    
-    const fullTag = `${newSelection.mainTag}_${newSelection.subtype}`;
-    
+
+    const tagData = {
+        username,
+        text: newSelection.text.trim(),
+        tag: newSelection.tag.trim(),
+        sentenceId: selectedSentence._id
+        // ❌ Removed review_status and status
+    };
+
+    console.log("DEBUG: Sending tag data:", tagData);
+
     const response = await fetchWithAuth(`http://127.0.0.1:5001/tags`, {
         method: 'POST',
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            username,
-            text: newSelection.text.trim(),
-            tag: fullTag,
-            sentenceId: selectedSentence._id
-        }),
+        body: JSON.stringify(tagData),
     });
-    
-    if (!response) return; // Authentication failed
-    
-    // Log the tag creation action
-    await logUserAction(`Added tag: "${newSelection.text.trim()}" as "${fullTag}" for sentence`);
-    
+
+    if (!response) return;
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error("DEBUG: Failed to create tag:", errorText);
+        alert('Failed to create tag. Please try again.');
+        return;
+    }
+
+    const result = await response.json();
+    console.log("DEBUG: Tag creation response:", result);
+
+    await logUserAction(`Added tag: "${newSelection.text.trim()}" as "${newSelection.tag.trim()}"`);
+
     await fetchTags();
-    setNewSelection({ isActive: false, text: '', mainTag: '', subtype: '' });
+    
+    setNewSelection({ isActive: false, text: '', tag: '' });
+    setSelectedSentence(prev => ({ ...prev }));
 };
+
     const handleRemoveTag = async (tagId) => {
     if (!selectedSentence) return;
     
@@ -675,35 +717,20 @@ export default function Dashboard() {
 
 
     const handleStartEditTag = (tag) => {
-        // Parse the existing tag into mainTag and subtype
-        const [mainTag, ...subtypeParts] = tag.tag.split('_');
-        const subtype = subtypeParts.join('_');
-        
-        setEditingTag({ 
-            isActive: true, 
-            _id: tag._id, 
-            text: tag.text, 
-            mainTag: mainTag,
-            subtype: subtype
-        });
-        setNewSelection({ isActive: false, text: '', mainTag: '', subtype: '' });
-    };
-
-
-
+    // No need to check for hierarchical tags here since they won't be clickable
+    setEditingTag({ isActive: true, _id: tag._id, text: tag.text, tag: tag.tag });
+    setNewSelection({ isActive: false, text: '', tag: '' });
+};
     
-
-     // Update the handleUpdateTag function
+    // Update the handleUpdateTag function
 const handleUpdateTag = async () => {
     if (!editingTag._id) return;
-
-    const fullTag = `${editingTag.mainTag}_${editingTag.subtype}`;
 
     // Local update for snappier UI
     setTags(prevTags =>
         prevTags.map(tag =>
             tag._id === editingTag._id
-                ? { ...tag, text: editingTag.text, tag: fullTag }
+                ? { ...tag, text: editingTag.text, tag: editingTag.tag }
                 : tag
         )
     );
@@ -715,7 +742,7 @@ const handleUpdateTag = async () => {
             body: JSON.stringify({
                 username,
                 text: editingTag.text.trim(),
-                tag: fullTag.trim(),
+                tag: editingTag.tag.trim(),
                 sentenceId: selectedSentence._id 
             })
         });
@@ -723,25 +750,53 @@ const handleUpdateTag = async () => {
         if (!response) return; // Authentication failed
         
         // Log the tag update action
-        await logUserAction(`Updated tag to: "${editingTag.text.trim()}" as "${fullTag}"`);
+        await logUserAction(`Updated tag to: "${editingTag.text.trim()}" as "${editingTag.tag.trim()}"`);
         
     } catch (err) {
         console.error("Error updating tag:", err);
     }
 
-    setEditingTag({ isActive: false, _id: null, text: '', mainTag: '', subtype: '' });
+    setEditingTag({ isActive: false, _id: null, text: '', tag: '' });
 };
 
-
-    const handleStatusChange = async (isAnnotated) => {
+const handleStatusChange = async (isAnnotated) => {
     if (!selectedSentence) return;
 
-    // Optimistic UI Update
+    // Optimistic UI Update - update local state only
     const updatedAllSentences = allSentences.map(s =>
         s._id === selectedSentence._id ? { ...s, is_annotated: isAnnotated } : s
     );
     setAllSentences(updatedAllSentences);
     setSelectedSentence({ ...selectedSentence, is_annotated: isAnnotated });
+
+    // Also update projectTasks to reflect the change
+    if (selectedProject) {
+        const updatedProjectTasks = projectTasks.map(project => {
+            if (project.project_name === selectedProject.project_name) {
+                const updatedSentences = project.sentences.map(s =>
+                    s._id === selectedSentence._id ? { ...s, is_annotated: isAnnotated } : s
+                );
+                
+                // Recalculate completed count
+                const completedCount = updatedSentences.filter(s => s.is_annotated).length;
+                
+                return {
+                    ...project,
+                    sentences: updatedSentences,
+                    completed: completedCount
+                };
+            }
+            return project;
+        });
+        
+        setProjectTasks(updatedProjectTasks);
+        
+        // Update selectedProject as well
+        const updatedSelectedProject = updatedProjectTasks.find(p => p.project_name === selectedProject.project_name);
+        if (updatedSelectedProject) {
+            setSelectedProject(updatedSelectedProject);
+        }
+    }
 
     try {
         const response = await fetchWithAuth(`http://127.0.0.1:5001/sentences/${selectedSentence._id}/status`, {
@@ -761,74 +816,107 @@ const handleUpdateTag = async () => {
         // Log the status change action
         await logUserAction(`Marked sentence as ${isAnnotated ? 'annotated' : 'not annotated'}`);
         
-        // Success: reload tasks to update metrics
-        await loadAllUserTasks(false); 
 
     } catch (err) {
         console.error("Final Error in Status Update:", err);
         alert(`Failed to update status. Reason: ${err.message}. Check console.`);
         
-        // Revert UI changes and fetch correct data state if update failed
-        await loadAllUserTasks(false);
+        // Revert local changes on error
+        await loadAllUserTasks(false); // Only reload on error
     }
 };
-
-const handleRequestReview = async () => {
-    // 1. Validation Checks
-    if (!selectedSentence || !selectedSentence.is_annotated) {
-        setReviewStatusMessage({ severity: 'error', message: 'Please ensure the sentence is marked as Annotated and selected.' });
-        return;
-    }
-
-    const sentenceTags = currentSentenceTags.filter(t => t.source_sentence_id === selectedSentence._id);
     
-    if (sentenceTags.length === 0) {
-         setReviewStatusMessage({ severity: 'warning', message: 'The sentence has no tags. Please annotate before requesting review.' });
-        return;
-    }
 
+    const handleSubmitTagForReview = async (tagId) => {
     try {
-        setReviewStatusMessage({ severity: 'info', message: 'Submitting to Review Queue...' });
-
-        // 2. API Call: POST /api/sentence/submit_for_review
-        const response = await fetchWithAuth(`${API_BASE_URL}/api/sentence/submit_for_review`, {
+        const response = await fetchWithAuth(`${API_BASE_URL}/api/tag/${tagId}/submit_for_review`, {
             method: 'POST',
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                sentence_id: selectedSentence._id,
-                project_id: selectedSentence.project_id,
-                annotator_username: username,
-            }),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
         });
 
         if (!response) return;
 
         if (response.ok) {
-            // 3. Optimistic UI Update on success
-            const updatedAllSentences = allSentences.map(s =>
-                // The backend sets 'PENDING_REVIEW' status, we update the local object
-                s._id === selectedSentence._id ? { ...s, review_status: 'PENDING_REVIEW' } : s
-            );
-            setAllSentences(updatedAllSentences);
-            setSelectedSentence({ ...selectedSentence, review_status: 'PENDING_REVIEW' });
+            // Update local state to reflect the change
+            setTagReviewStatus(prev => ({
+                ...prev,
+                [tagId]: 'pending'
+            }));
             
-            setReviewStatusMessage({ severity: 'success', message: 'Sentence submitted to reviewer dashboard successfully!' });
-            logUserAction(`Requested review for sentence ${selectedSentence._id}`);
-
-            // You would typically navigate to the next task here.
-            // const nextSentence = findNextSentence(selectedSentence._id, visibleSentences);
-            // setSelectedSentence(nextSentence);
-
+            // Refresh tags to get updated data
+            await fetchTags();
+            
+            // Log the action
+            await logUserAction(`Submitted individual tag for review`);
+            
+            alert('Tag submitted for review successfully!');
         } else {
-            const errorData = await response.json().catch(() => ({ error: 'Server did not return valid JSON.' }));
-            setReviewStatusMessage({ severity: 'error', message: `Submission Failed: ${errorData.message || errorData.error || 'Server Error'}` });
+            const errorData = await response.json();
+            alert(`Failed to submit tag for review: ${errorData.message || 'Unknown error'}`);
         }
     } catch (error) {
-        console.error('Error during review submission:', error);
-        setReviewStatusMessage({ severity: 'error', message: 'A network error occurred during submission.' });
+        console.error('Error submitting tag for review:', error);
+        alert('Error submitting tag for review. Please try again.');
     }
 };
 
+const handleCancelTagReview = async (tagId) => {
+    try {
+        const response = await fetchWithAuth(`${API_BASE_URL}/api/tag/${tagId}/cancel_review`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+
+        if (!response) return;
+
+        if (response.ok) {
+            // Update local state
+            setTagReviewStatus(prev => ({
+                ...prev,
+                [tagId]: 'approved'
+            }));
+            
+            // Refresh tags
+            await fetchTags();
+            
+            // Log the action
+            await logUserAction(`Cancelled review request for tag`);
+            
+            alert('Tag review request cancelled successfully!');
+        } else {
+            const errorData = await response.json();
+            alert(`Failed to cancel tag review: ${errorData.message || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Error cancelling tag review:', error);
+        alert('Error cancelling tag review. Please try again.');
+    }
+};
+
+const getTagStatus = (tag) => {
+    console.log("DEBUG: Checking tag status for:", tag._id, tag);
+    
+    // Check review_status first
+    if (tag.review_status === 'Pending' || tag.review_status === 'pending') {
+        return 'pending';
+    } else if (tag.review_status === 'Approved' || tag.review_status === 'approved') {
+        return 'approved';
+    } else if (tag.review_status === 'Rejected' || tag.review_status === 'rejected') {
+        return 'rejected';
+    }
+    
+    // Fallback to status field
+    if (tag.status === 'pending') {
+        return 'pending';
+    } else if (tag.status === 'approved') {
+        return 'approved';
+    }
+    
+    // Default for new tags should be approved
+    return 'approved';
+};
 
     const handleLogout = async () => {
         try {
@@ -846,7 +934,7 @@ const handleRequestReview = async () => {
             // Always remove token and navigate to login
             removeToken();
             isInitialLoad.current = true;
-            navigate("/");
+            navigate("/login"); 
         }
     };
 
@@ -865,6 +953,7 @@ const handleRequestReview = async () => {
     
     const getProjectCardColor = (isPending) => isPending ? '#ffcdd2' : '#c8e6c9';
 
+    // --- NEW: Handle Navigation from Drawer ---
     const handleDrawerNavigation = (path, action) => {
         setDrawerOpen(false);
         if (path) {
@@ -881,7 +970,6 @@ const handleRequestReview = async () => {
         { name: 'Give Feedback', action: () => setIsFeedbackOpen(true), icon: FeedbackIcon, path: null },
         { name: 'Revision Notes', action: () => setIsRevisionNotesDialogOpen(true), icon: AssignmentLateIcon, path: null, badge: revisionList.length },
         { name: 'Tag Statistics', action: handleOpenStats, icon: QueryStatsIcon, path: null },
-        { name: 'Logout', action: handleLogout, icon: LogoutIcon, path: null },
     ];
 
 
@@ -911,9 +999,25 @@ const handleRequestReview = async () => {
                         </Badge>
                     </IconButton>
                     <Typography variant="h6" fontWeight={500}>
-                        MWE Annotator - {userData?.full_name || username || "User"}
+                    MWE Annotator - {userData?.full_name || userData?.username || username || "User"}
                     </Typography>
                 </Box>
+
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <Button
+                    color="inherit"
+                    onClick={handleLogout}
+                    startIcon={<LogoutIcon />}
+                    sx={{ 
+                        ml: 1,
+                        '&:hover': {
+                            backgroundColor: 'rgba(255, 255, 255, 0.1)'
+                        }
+                    }}
+                >
+                    Logout
+                </Button>
+            </Box>
                 
                 {/* --- DRAWER (HAMBURGER MENU) --- */}
                 <Drawer
@@ -952,6 +1056,7 @@ const handleRequestReview = async () => {
                 </Drawer>
             </Box>
             {/* --- END: NEW HAMBURGER NAVBAR --- */}
+
             <Paper elevation={3} sx={{ p: 4, mt: 4, mb: 4, maxHeight: '90vh', overflow: 'hidden' }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                     <Typography variant="h4" gutterBottom sx={{ mb: 0 }}>Welcome, {userData?.full_name || username || "User"}</Typography>
@@ -962,11 +1067,11 @@ const handleRequestReview = async () => {
                     <Typography variant="h6" gutterBottom>Assigned Tasks</Typography>
                     <Grid container spacing={2}>
                         {projectTasks.length === 0 ? (
-                             <Grid item xs={12}>
-                                 <Typography color="text.secondary" sx={{ p: 2 }}>
-                                     You have no assigned projects. Please contact your administrator.
-                                 </Typography>
-                             </Grid>
+                                <Grid item xs={12}>
+                                    <Typography color="text.secondary" sx={{ p: 2 }}>
+                                        You have no assigned projects. Please contact your administrator.
+                                    </Typography>
+                                </Grid>
                         ) : (
                             projectTasks.map(project => {
                                 const isPending = project.completed < project.total;
@@ -1016,8 +1121,8 @@ const handleRequestReview = async () => {
                         onChange={handleSearchChange}
                     />
                 </Box>
-    
-                <Box sx={{ display: 'flex', gap: 3, mt: 2, maxHeight: '60vh', overflow: 'hidden' }}>
+            
+                <Box sx={{ display: 'flex', gap: 3, mt: 2 }}>
                     <Box sx={{ width: '45%', display: 'flex', flexDirection: 'column', maxHeight: '100%' }}>
                         <Typography variant="h6" gutterBottom>Subject knowledge Sentences</Typography>
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
@@ -1051,7 +1156,7 @@ const handleRequestReview = async () => {
                             ) : (
                                 visibleSentences.map((s) => (
                                     <ListItem
-                                        key={s._id} divider button
+                                        key={s._id} divider button data-sentence-id={s._id} 
                                         selected={selectedSentence && selectedSentence._id === s._id}
                                         onMouseUp={() => handleSelectionEvent(s)}
                                         sx={{
@@ -1102,48 +1207,26 @@ const handleRequestReview = async () => {
                                 onChange={(e) => setEditingTag(prev => ({ ...prev, text: e.target.value }))} 
                                 />
                                 
-                                {/* Main Tag Selection for Editing */}
                                 <FormControl fullWidth sx={{ mb: 2 }}>
-                                    <InputLabel>Main Tag</InputLabel>
-                                    <Select
-                                        value={editingTag.mainTag}
-                                        label="Main Tag"
-                                        onChange={(e) => setEditingTag(prev => ({ 
-                                            ...prev, 
-                                            mainTag: e.target.value,
-                                            subtype: '' // Reset subtype when main tag changes
-                                        }))}
-                                    >
-                                        {Object.keys(TAG_STRUCTURE).map((mainTag) => (
-                                            <MenuItem key={mainTag} value={mainTag}>
-                                                {mainTag}
-                                            </MenuItem>
-                                        ))}
-                                    </Select>
-                                </FormControl>
-                                
-                                {/* Subtype Selection for Editing */}
-                                <FormControl fullWidth sx={{ mb: 2 }}>
-                                    <InputLabel>Subtype</InputLabel>
-                                    <Select
-                                        value={editingTag.subtype}
-                                        label="Subtype"
-                                        onChange={(e) => setEditingTag(prev => ({ ...prev, subtype: e.target.value }))}
-                                        disabled={!editingTag.mainTag}
-                                    >
-                                        {editingTag.mainTag && TAG_STRUCTURE[editingTag.mainTag].map((subtype) => (
-                                            <MenuItem key={subtype} value={subtype}>
-                                                {subtype}
-                                            </MenuItem>
-                                        ))}
-                                    </Select>
+                                <InputLabel>Tag Label</InputLabel>
+                                <Select
+                                    value={editingTag.tag}
+                                    label="Tag Label"
+                                    onChange={(e) => setEditingTag(prev => ({ ...prev, tag: e.target.value }))}
+                                >
+                                    {PREDEFINED_TAGS.map((tag) => (
+                                    <MenuItem key={tag} value={tag}>
+                                        {tag}
+                                    </MenuItem>
+                                    ))}
+                                </Select>
                                 </FormControl>
                                 
                                 <Box sx={{ display: 'flex', gap: 1 }}>
                                 <Button onClick={handleUpdateTag} variant="contained">Save Changes</Button>
-                                <Button onClick={() => setEditingTag({ isActive: false, _id: null, text: '', mainTag: '', subtype: '' })} variant="outlined">Cancel</Button>
+                                <Button onClick={() => setEditingTag({ isActive: false, _id: null, text: '', tag: '' })} variant="outlined">Cancel</Button>
                                 </Box>
-                            </Box>
+                              </Box>
                             ) : newSelection.isActive ? (
                                 <Box>
                                     <Typography variant="overline">CREATE NEW TAG</Typography>
@@ -1171,11 +1254,7 @@ const handleRequestReview = async () => {
                                                         label={`${rec.recommended_tag} (${Math.round(rec.confidence * 100)}%)`}
                                                         onClick={() => handleSelectRecommendation(rec)}
                                                         color={rec.is_auto_detected ? "secondary" : "primary"}
-                                                        variant={
-                                                            `${newSelection.mainTag}_${newSelection.subtype}` === rec.recommended_tag 
-                                                                ? "filled" 
-                                                                : "outlined"
-                                                        }
+                                                        variant={newSelection.tag === rec.recommended_tag ? "filled" : "outlined"}
                                                         sx={{ cursor: 'pointer' }}
                                                         title={
                                                             rec.is_auto_detected 
@@ -1203,38 +1282,16 @@ const handleRequestReview = async () => {
                                         </Box>
                                     )}
                                     
-                                    {/* Main Tag Selection */}
                                     <FormControl fullWidth sx={{ mb: 2 }}>
-                                        <InputLabel>Main Tag</InputLabel>
+                                        <InputLabel>Tag Label</InputLabel>
                                         <Select
-                                            value={newSelection.mainTag}
-                                            label="Main Tag"
-                                            onChange={(e) => setNewSelection(s => ({ 
-                                                ...s, 
-                                                mainTag: e.target.value,
-                                                subtype: '' // Reset subtype when main tag changes
-                                            }))}
+                                            value={newSelection.tag}
+                                            label="Tag Label"
+                                            onChange={(e) => setNewSelection(s => ({ ...s, tag: e.target.value }))}
                                         >
-                                            {Object.keys(TAG_STRUCTURE).map((mainTag) => (
-                                                <MenuItem key={mainTag} value={mainTag}>
-                                                    {mainTag}
-                                                </MenuItem>
-                                            ))}
-                                        </Select>
-                                    </FormControl>
-                                    
-                                    {/* Subtype Selection */}
-                                    <FormControl fullWidth sx={{ mb: 2 }}>
-                                        <InputLabel>Subtype</InputLabel>
-                                        <Select
-                                            value={newSelection.subtype}
-                                            label="Subtype"
-                                            onChange={(e) => setNewSelection(s => ({ ...s, subtype: e.target.value }))}
-                                            disabled={!newSelection.mainTag}
-                                        >
-                                            {newSelection.mainTag && TAG_STRUCTURE[newSelection.mainTag].map((subtype) => (
-                                                <MenuItem key={subtype} value={subtype}>
-                                                    {subtype}
+                                            {PREDEFINED_TAGS.map((tag) => (
+                                                <MenuItem key={tag} value={tag}>
+                                                    {tag}
                                                 </MenuItem>
                                             ))}
                                         </Select>
@@ -1243,7 +1300,7 @@ const handleRequestReview = async () => {
                                     <Box sx={{ display: 'flex', gap: 1 }}>
                                         <Button onClick={handleSaveNewTag} variant="contained">Save Tag</Button>
                                         <Button onClick={() => {
-                                            setNewSelection({ isActive: false, text: '', mainTag: '', subtype: '' });
+                                            setNewSelection({ isActive: false, text: '', tag: '' });
                                             setShowRecommendations(false);
                                             setTagRecommendations([]);
                                         }} variant="outlined">Cancel</Button>
@@ -1251,51 +1308,106 @@ const handleRequestReview = async () => {
                                 </Box>
                             ) : (
                                 <Box>
-                                    <Typography variant="overline">TAGS FOR THIS SENTENCE</Typography>  
-                                    <Box sx={{ my: 2, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                                        {currentSentenceTags.map(tag => (
-                                            <Chip 
-                                                key={tag._id} 
-                                                label={
-                                                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                                        {tag.text} ({tag.tag})
-                                                        {tag.status === 'pending' && (
-                                                            <Box 
-                                                                sx={{ 
-                                                                    ml: 1,
-                                                                    width: 8, 
-                                                                    height: 8, 
-                                                                    borderRadius: '50%', 
-                                                                    backgroundColor: '#ff9800',
-                                                                    animation: 'pulse 1.5s infinite'
-                                                                }} 
-                                                                title="Pending Review"
-                                                            />
-                                                        )}
-                                                    </Box>
-                                                }
-                                                onDelete={() => handleRemoveTag(tag._id)} // Remove the condition - always show delete
-                                                onClick={() => handleStartEditTag(tag)} 
-                                                color={tag.status === 'pending' ? "default" : "primary"}
-                                                variant={tag.status === 'pending' ? "outlined" : "filled"}
-                                                sx={{ 
-                                                    cursor: "pointer",
-                                                    border: tag.status === 'pending' ? '2px dashed #ff9800' : 'none',
-                                                    position: 'relative',
-                                                    opacity: tag.status === 'pending' ? 0.8 : 1
-                                                }}
-                                                title={
-                                                    tag.status === 'pending' 
-                                                        ? `Pending review - ${tag.review_comments || 'No comments'} - Click to edit, X to delete`
-                                                        : `Approved - Annotated by: ${tag.username} - Click to edit, X to delete`
-                                                }
-                                            />
-                                        ))}
-                                        
-                                        {currentSentenceTags.length === 0 && (
-                                            <Typography color="text.secondary">No tags yet. Highlight text to add one.</Typography>
-                                        )}
+                                    <Typography variant="overline">TAGS FOR THIS SENTENCE</Typography> 
+                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+    {currentSentenceTags.map(tag => {
+        const isHierarchical = isHierarchicalTag(tag.tag);
+        const tagStatus = getTagStatus(tag);
+        const isPendingReview = tagStatus === 'pending';
+        
+        // Tooltip content based on tag type
+        const tooltipTitle = isHierarchical 
+            ? `Named Entity Tag - Cannot be edited or deleted`
+            : isPendingReview 
+                ? `Pending review - Click to edit, X to delete`
+                : `Approved - Annotated by: ${tag.username} - Click to edit, X to delete`;
+
+        return (
+            <Tooltip key={tag._id} title={tooltipTitle} arrow>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Chip 
+                        label={
+                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                {tag.text} ({tag.tag})
+                                {isHierarchical && (
+                                    <Box sx={{ ml: 0.5, fontSize: '0.7rem', color: 'primary.main' }}>
+                                        🔒
                                     </Box>
+                                )}
+                                {isPendingReview && (
+                                    <Box sx={{ 
+                                        ml: 1,
+                                        width: 8, 
+                                        height: 8, 
+                                        borderRadius: '50%', 
+                                        backgroundColor: '#ff9800',
+                                        animation: 'pulse 1.5s infinite'
+                                    }} />
+                                )}
+                            </Box>
+                        }
+                        onDelete={isHierarchical ? undefined : () => handleRemoveTag(tag._id)}
+                        onClick={isHierarchical ? undefined : () => handleStartEditTag(tag)} 
+                        color={isPendingReview ? "default" : "primary"}
+                        variant={isPendingReview ? "outlined" : "filled"}
+                        sx={{ 
+                            cursor: isHierarchical ? "default" : "pointer",
+                            border: isPendingReview ? '2px dashed #ff9800' : 'none',
+                            position: 'relative',
+                            opacity: isPendingReview ? 0.8 : 1,
+                            backgroundColor: isHierarchical ? '#e3f2fd' : undefined,
+                            '&:hover': {
+                                backgroundColor: isHierarchical ? '#e3f2fd' : undefined,
+                                transform: isHierarchical ? 'none' : 'scale(1.05)',
+                            },
+                            transition: 'all 0.2s ease-in-out',
+                        }}
+                    />
+                    
+                    {/* Individual Review Button */}
+                    {!isHierarchical && tagStatus === 'approved' && (
+                        <Tooltip title="Submit this tag for review">
+                            <IconButton 
+                                size="small" 
+                                color="primary"
+                                onClick={() => handleSubmitTagForReview(tag._id)}
+                                sx={{ 
+                                    bgcolor: 'primary.main',
+                                    color: 'white',
+                                    '&:hover': { bgcolor: 'primary.dark' }
+                                }}
+                            >
+                                <RateReviewIcon fontSize="small" />
+                            </IconButton>
+                        </Tooltip>
+                    )}
+                    
+                    {/* Cancel Review Button */}
+                    {!isHierarchical && tagStatus === 'pending' && (
+                        <Tooltip title="Cancel review request">
+                            <IconButton 
+                                size="small" 
+                                color="warning"
+                                onClick={() => handleCancelTagReview(tag._id)}
+                                sx={{ 
+                                    bgcolor: 'warning.main',
+                                    color: 'white',
+                                    '&:hover': { bgcolor: 'warning.dark' }
+                                }}
+                            >
+                                <AssignmentLateIcon fontSize="small" />
+                            </IconButton>
+                        </Tooltip>
+                    )}
+                </Box>
+            </Tooltip>
+        );
+    })}
+
+    {currentSentenceTags.length === 0 && (
+        <Typography color="text.secondary">No tags yet. Highlight text to add one.</Typography>
+    )}
+</Box>
 
                                     <Typography variant="overline" sx={{ mt: 3, display: 'block' }}>SENTENCE ACTIONS</Typography>
                                     <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
@@ -1309,7 +1421,17 @@ const handleRequestReview = async () => {
                                                     color: 'white',
                                                     backgroundColor: theme.palette.success.main,
                                                     opacity: 0.7
+                                                },
+                                                // --- NEW STYLING ---
+                                                fontWeight: 'bold',
+                                                boxShadow: theme.shadows[3],
+                                                transition: 'transform 0.1s',
+                                                '&:hover': { transform: 'scale(1.02)' },
+                                                '&:active': { // <--- ADDED CLICK FEEDBACK
+                                                    transform: 'translateY(1px)', 
+                                                    boxShadow: 'none' 
                                                 }
+                                                // --- END NEW STYLING ---
                                             }}
                                         >
                                             Mark as Annotated
@@ -1319,28 +1441,24 @@ const handleRequestReview = async () => {
                                             color="secondary" 
                                             onClick={() => handleStatusChange(false)} 
                                             disabled={!selectedSentence.is_annotated}
+                                            sx={{
+                                                // --- NEW STYLING ---
+                                                fontWeight: 'bold',
+                                                boxShadow: theme.shadows[3],
+                                                transition: 'transform 0.1s',
+                                                '&:hover': { transform: 'scale(1.02)' },
+                                                '&:active': { // <--- ADDED CLICK FEEDBACK
+                                                    transform: 'translateY(1px)', 
+                                                    boxShadow: 'none' 
+                                                }
+                                                // --- END NEW STYLING ---
+                                            }}
                                         >
                                             Mark as Not Annotated
                                         </Button>
-                                        <Button
-                                            variant ="contained"
-                                            color="primary"
-                                            onClick={handleRequestReview}
-                                            disabled={!selectedSentence || selectedSentence.review_status === 'PENDING_REVIEW' || !selectedSentence.is_annotated}
-                                            startIcon={<RateReviewIcon/>}
-                                            sx={{ bgcolor:theme.palette.info.main}}
-                                        >
-                                            REQUEST REVIEW
-                                        </Button>
-                                        
-                                    </Box>
-                                    {/* Status Display */}
-                                        {selectedSentence && selectedSentence.review_status === 'PENDING_REVIEW' && (
-                                            <Typography variant="caption" color="warning.dark" sx={{ mt: 1 }}>
-                                                * This sentence is currently awaiting reviewer feedback.
-                                            </Typography>
-                                        )}
 
+                                        </Box>
+                                        
                                         {/* Alert for Submission Success/Error */}
                                         {reviewStatusMessage && (
                                             <Alert severity={reviewStatusMessage.severity} onClose={() => setReviewStatusMessage(null)} sx={{ mt: 2 }}>
@@ -1394,6 +1512,14 @@ const handleRequestReview = async () => {
                 open={isFeedbackOpen} 
                 onClose={handleFeedbackClose} 
                 userEmail={userData?.email || `${username}@placeholder.com`} 
+            />
+
+            <SentencesRevisionNotesDialog
+                open={isRevisionNotesDialogOpen}
+                onClose={() => setIsRevisionNotesDialogOpen(false)}
+                username={username}
+                onNavigateToSentence={handleNavigateToSentence}
+                revisionNotes={revisionList}
             />
 
             <Dialog 

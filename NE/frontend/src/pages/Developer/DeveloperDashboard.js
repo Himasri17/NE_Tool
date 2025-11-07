@@ -15,6 +15,7 @@ import DeveloperModeIcon from '@mui/icons-material/DeveloperMode';
 import MenuIcon from '@mui/icons-material/Menu';
 import GroupAddIcon from '@mui/icons-material/GroupAdd';
 import { red } from '@mui/material/colors'; // Import specific color palette for safety
+import { removeToken } from '../../components/authUtils';
 
 const API_BASE_URL = 'http://127.0.0.1:5001';
 
@@ -68,6 +69,7 @@ const DeveloperNavbar = ({
     const handleLogout = () => {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
+        removeToken();
         navigate('/login');
     };
 
@@ -160,7 +162,7 @@ const FeedbackViewer = ({ open, onClose, feedbacks, onMarkReviewed, onDeleteFeed
     
     const handleMarkReviewedLocal = async (feedbackId) => {
         try {
-            const response = await fetch(`${apiBaseUrl}/admin/feedbacks/${feedbackId}/review`, { 
+            const response = await fetch(`${apiBaseUrl}/developer/feedbacks/${feedbackId}/review`, { 
                 method: 'PUT',
                 headers: authHeaders
             });
@@ -177,7 +179,7 @@ const FeedbackViewer = ({ open, onClose, feedbacks, onMarkReviewed, onDeleteFeed
     const handleDeleteFeedbackLocal = async (feedbackId) => {
         if (!window.confirm("Are you sure you want to delete this feedback and any associated file?")) return;
         try {
-            const response = await fetch(`${apiBaseUrl}/admin/feedbacks/${feedbackId}`, { 
+            const response = await fetch(`${apiBaseUrl}/developer/feedbacks/${feedbackId}`, { 
                 method: 'DELETE',
                 headers: authHeaders
             });
@@ -266,11 +268,14 @@ export default function DeveloperDashboard() {
     const [rejectionReason, setRejectionReason] = useState('');
     const [rejectingUserId, setRejectingUserId] = useState(null);
 
-    // --- Authentication Helper ---
-    const getAuthHeaders = useCallback(() => ({
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
-    }), []);
+    const getAuthHeaders = useCallback(() => {
+        const token = localStorage.getItem('jwt_token') || localStorage.getItem('token');
+        console.log('DEBUG - Using token:', token ? 'Token found' : 'No token found');
+        return {
+            'Content-Type': 'application/json',
+            'Authorization': token ? `Bearer ${token}` : ''
+        };
+    }, []);
 
     // --- Fetch Data (Pending Users and Feedback) ---
     const fetchDashboardData = useCallback(async () => {
@@ -295,7 +300,7 @@ export default function DeveloperDashboard() {
             }
 
             // 2. Fetch Feedback
-            const feedbackResponse = await fetch(`${API_BASE_URL}/developer/feedback`, { headers });
+            const feedbackResponse = await fetch(`${API_BASE_URL}/developer/feedbacks`, { headers });
             const feedbackData = await feedbackResponse.json();
 
             if (feedbackResponse.ok) {

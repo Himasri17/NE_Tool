@@ -51,7 +51,7 @@ export default function ContactUsDialog({ open, onClose }) {
                         <Typography variant="subtitle1" component="span" fontWeight="bold">Phone:</Typography>
                     </Box>
                     <MuiLink href="tel:+911234567890" underline="hover" color="text.primary" sx={{ ml: 3 }}>
-                        +91 12345 67890
+                        +91 XXXXXXXXXXX
                     </MuiLink>
                 </Box>
 
