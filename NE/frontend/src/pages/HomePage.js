@@ -47,12 +47,13 @@ const HomePage = () => {
         <div className="hero-content">
           <div className="hero-text">
             <h1 className="hero-title">
-              Multiword Expression<br />
-              Annotation Tool
+              Indian Language Named Entity Annotation
             </h1>
             <p className="hero-subtitle">
-              A powerful and intuitive platform designed for annotating Multiword Expressions 
-              in Indian languages with precision and ease.
+              Named Entity Recognition (NER) is a vital task in Natural Language Processing (NLP), 
+              helping machines identify and classify names, organizations, locations, dates, and numerical expressions. 
+              These annotation guidelines provide a structured framework for Indian languages, ensuring accurate and 
+              scalable dataset creation.
             </p>
             <button
               onClick={handleGetStarted}
@@ -67,12 +68,12 @@ const HomePage = () => {
       {/* About Section */}
       <section className="about-section">
         <div className="about-card">
-          <h2 className="about-title">What is MWE Annotation?</h2>
+          <h2 className="about-title">What is Named Entity Recognition?</h2>
           <p className="about-description">
-            Multiword Expressions (MWEs) are phrases that consist of multiple words but convey 
-            a single, often non-compositional meaning. Our platform provides a state-of-the-art 
-            annotation environment specifically designed for Indian languages, helping researchers 
-            and linguists create valuable NLP datasets.
+            Named Entity Recognition (NER) is the process of identifying and categorizing entities in text. 
+            This includes proper nouns (ENAMEX), numerical expressions (NUMEX), and temporal expressions (TIMEX). 
+            Our annotation guidelines provide a structured approach to annotating these entities, ensuring 
+            high-quality linguistic datasets for Indian languages.
           </p>
         </div>
       </section>
@@ -86,20 +87,20 @@ const HomePage = () => {
             title="Indian Language Support" 
           />
           <FeatureCard 
-            icon="👆" 
-            title="Intuitive Interface" 
+            icon="🏷️" 
+            title="ENAMEX Entities" 
           />
           <FeatureCard 
-            icon="📊" 
-            title="MWE Classification" 
+            icon="⏰" 
+            title="TIMEX Expressions" 
           />
           <FeatureCard 
-            icon="📈" 
-            title="Enhanced NLP" 
+            icon="🔢" 
+            title="NUMEX Expressions" 
           />
           <FeatureCard 
-            icon="📥" 
-            title="Export Options" 
+            icon="✅" 
+            title="High Accuracy" 
           />
         </div>
       </section>
@@ -117,7 +118,7 @@ const HomePage = () => {
 
       {/* Footer */}
       <footer className="footer">
-        <p className="footer-text">© 2025 MWE Annotation Tool</p>
+        <p className="footer-text">© 2025 NE Annotation Tool</p>
       </footer>
     </div>
   );
