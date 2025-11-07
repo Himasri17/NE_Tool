@@ -40,7 +40,7 @@ app.config['JWT_EXPIRATION_HOURS'] = 24
 
 # --- MongoDB Connection ---
 client = MongoClient("mongodb://localhost:27017/")
-db = client["ne_TOOL"]
+db = client["NER_TOOL"]
 
 # --- Mail Configuration ---
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'  

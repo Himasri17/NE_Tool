@@ -5,7 +5,7 @@ import {
     Paper, Dialog, DialogActions, DialogContent, Divider, ListItemIcon,
     DialogContentText, DialogTitle, Chip, CircularProgress, 
     Grid, LinearProgress, Card, CardContent ,FormControl, InputLabel, Select, MenuItem, useTheme, Alert,Tooltip,
-    Drawer, IconButton, Badge 
+    Drawer, IconButton, Badge
 } from "@mui/material";
 import FeedbackIcon from '@mui/icons-material/Feedback'; 
 import RateReviewIcon from '@mui/icons-material/RateReview';
@@ -18,12 +18,10 @@ import QueryStatsIcon from '@mui/icons-material/QueryStats'; // Tag Stats
 import LogoutIcon from '@mui/icons-material/Logout'; // Logout Icon
 import { getToken, removeToken } from '../../components/authUtils'; // <-- FIXED PATH
 
-
 import FeedbackDialog from './FeedbackDialog'; // <-- FIXED PATH
 import { SentencesRevisionNotesDialog } from './SentencesRevisionNotesDialog'; // <-- FIXED PATH
 
 const API_BASE_URL = 'http://127.0.0.1:5001';
-
 
 export default function Dashboard() {
     const { username } = useParams();
@@ -60,8 +58,12 @@ export default function Dashboard() {
 
     const [revisionList, setRevisionList] = useState([]);
     const [isRevisionNotesDialogOpen, setIsRevisionNotesDialogOpen] = useState(false);
-    const [drawerOpen, setDrawerOpen] = useState(false); // <-- NEW DRAWER STATE
+    const [drawerOpen, setDrawerOpen] = useState(false);
 
+    // --- Hierarchical Tag Selection States ---
+    const [selectedMainTag, setSelectedMainTag] = useState('');
+    const [selectedSubtag, setSelectedSubtag] = useState('');
+    const [availableSubtags, setAvailableSubtags] = useState([]);
 
     const [reviewStatusMessage, setReviewStatusMessage] = useState(null);
 
@@ -71,14 +73,15 @@ export default function Dashboard() {
     
 
     const TAG_STRUCTURE = {
-    "TIMEX": ["Time", "Date", "Day"],
-    "NUMEX": ["Currency", "Measurement", "Cardinal"],
-    "ENAMEX": ["Person", "Organisation", "Location", "Facilities", "Artifacts"],
+        "TIMEX": ["Time", "Date", "Day"],
+        "NUMEX": ["Currency", "Measurement", "Cardinal"],
+        "ENAMEX": ["Person", "Organisation", "Location", "Facilities", "Artifacts"],
     };
     
     const HIERARCHICAL_TAGS = Object.entries(TAG_STRUCTURE).flatMap(([mainTag, subtypes]) =>
         subtypes.map(subtype => `${mainTag}_${subtype}`)
     );
+
     const PREDEFINED_TAGS = [
             "Noun Compound",
             "Reduplicated", 
@@ -94,6 +97,46 @@ export default function Dashboard() {
     // --- Ref for scroll control ---
     const listRef = useRef(null);
     const isInitialLoad = useRef(true);
+
+    // --- Hierarchical Tag Handlers ---
+    const handleMainTagSelect = (mainTag) => {
+        setSelectedMainTag(mainTag);
+        setAvailableSubtags(TAG_STRUCTURE[mainTag] || []);
+        setSelectedSubtag('');
+        
+        // If we're in new selection mode, update the tag
+        if (newSelection.isActive) {
+            const fullTag = mainTag && TAG_STRUCTURE[mainTag]?.[0] ? `${mainTag}_${TAG_STRUCTURE[mainTag][0]}` : '';
+            setNewSelection(prev => ({
+                ...prev,
+                tag: fullTag
+            }));
+        } else if (editingTag.isActive) {
+            const fullTag = mainTag && TAG_STRUCTURE[mainTag]?.[0] ? `${mainTag}_${TAG_STRUCTURE[mainTag][0]}` : '';
+            setEditingTag(prev => ({
+                ...prev,
+                tag: fullTag
+            }));
+        }
+    };
+
+    const handleSubtagSelect = (subtag) => {
+        setSelectedSubtag(subtag);
+        const fullTag = `${selectedMainTag}_${subtag}`;
+        
+        // Set the selected tag in newSelection or editingTag
+        if (newSelection.isActive) {
+            setNewSelection(prev => ({
+                ...prev,
+                tag: fullTag
+            }));
+        } else if (editingTag.isActive) {
+            setEditingTag(prev => ({
+                ...prev,
+                tag: fullTag
+            }));
+        }
+    };
 
     useEffect(() => {
         const token = getToken();
@@ -191,10 +234,11 @@ export default function Dashboard() {
             alert('Error navigating to sentence. Please try manually finding it in the list.');
         }
     };
+    
+        
     const isHierarchicalTag = (tag) => {
-    return HIERARCHICAL_TAGS.includes(tag);
+        return PREDEFINED_TAGS.includes(tag);
     };
-
 
     useEffect(() => {
         const fetchRevisionNotesCount = async () => {
@@ -584,7 +628,7 @@ export default function Dashboard() {
 
     // If actual text is selected, continue with tag suggestion logic
     if (highlightedText.length > 0 && !editingSentence.isActive) {
-        let suggestion = "Noun Compound";
+        let suggestion = "TIMEX_Time"; // Default to first hierarchical tag
         const lowerCaseText = highlightedText.toLowerCase();
         const existingTag = tags.find(t => t.text.toLowerCase() === lowerCaseText);
 
@@ -593,6 +637,9 @@ export default function Dashboard() {
         }
 
         setNewSelection({ isActive: true, text: highlightedText, tag: suggestion });
+        setSelectedMainTag('TIMEX');
+        setAvailableSubtags(TAG_STRUCTURE.TIMEX);
+        setSelectedSubtag('Time');
 
         // Immediately check for auto-detected tags from current sentence
         const autoDetectedTags = findAutoDetectedTags(sentence, highlightedText);
@@ -642,6 +689,15 @@ export default function Dashboard() {
         ...prev,
         tag: recommendation.recommended_tag
     }));
+    
+    // Parse the recommended tag to set main tag and subtag
+    const [mainTag, subtag] = recommendation.recommended_tag.split('_');
+    if (mainTag && subtag && TAG_STRUCTURE[mainTag]) {
+        setSelectedMainTag(mainTag);
+        setAvailableSubtags(TAG_STRUCTURE[mainTag]);
+        setSelectedSubtag(subtag);
+    }
+    
     setShowRecommendations(false);
     
     // Log recommendation selection
@@ -659,7 +715,6 @@ export default function Dashboard() {
         text: newSelection.text.trim(),
         tag: newSelection.tag.trim(),
         sentenceId: selectedSentence._id
-        // ❌ Removed review_status and status
     };
 
     console.log("DEBUG: Sending tag data:", tagData);
@@ -716,8 +771,20 @@ export default function Dashboard() {
 };
 
 
-    const handleStartEditTag = (tag) => {
-    // No need to check for hierarchical tags here since they won't be clickable
+   const handleStartEditTag = (tag) => {
+    // Check if it's a locked predefined tag
+    if (isHierarchicalTag(tag.tag)) {
+        return; 
+    }
+    
+    // Parse the tag to set main tag and subtag for hierarchical tags
+    const [mainTag, subtag] = tag.tag.split('_');
+    if (mainTag && subtag && TAG_STRUCTURE[mainTag]) {
+        setSelectedMainTag(mainTag);
+        setAvailableSubtags(TAG_STRUCTURE[mainTag]);
+        setSelectedSubtag(subtag);
+    }
+    
     setEditingTag({ isActive: true, _id: tag._id, text: tag.text, tag: tag.tag });
     setNewSelection({ isActive: false, text: '', tag: '' });
 };
@@ -965,8 +1032,8 @@ const getTagStatus = (tag) => {
     
     // --- NEW: Navigation Item List ---
     const navItems = [
-        { name: 'User Guidelines', action: () => window.open('/NE Tool - User Guidelines.pdf', '_blank'), icon: RuleIcon, path: null },
-        { name: 'Annotation Guidelines', action: () => window.open('/ne_Guidelines.pdf', '_blank'), icon: DescriptionIcon, path: null },
+        { name: 'User Guidelines', action: () => window.open('/annotation_guidelines.pdf', '_blank'), icon: RuleIcon, path: null },
+        { name: 'Annotation Guidelines', action: () => window.open('/NER_User_Guidelines.pdf', '_blank'), icon: DescriptionIcon, path: null },
         { name: 'Give Feedback', action: () => setIsFeedbackOpen(true), icon: FeedbackIcon, path: null },
         { name: 'Revision Notes', action: () => setIsRevisionNotesDialogOpen(true), icon: AssignmentLateIcon, path: null, badge: revisionList.length },
         { name: 'Tag Statistics', action: handleOpenStats, icon: QueryStatsIcon, path: null },
@@ -1207,20 +1274,39 @@ const getTagStatus = (tag) => {
                                 onChange={(e) => setEditingTag(prev => ({ ...prev, text: e.target.value }))} 
                                 />
                                 
-                                <FormControl fullWidth sx={{ mb: 2 }}>
-                                <InputLabel>Tag Label</InputLabel>
-                                <Select
-                                    value={editingTag.tag}
-                                    label="Tag Label"
-                                    onChange={(e) => setEditingTag(prev => ({ ...prev, tag: e.target.value }))}
-                                >
-                                    {PREDEFINED_TAGS.map((tag) => (
-                                    <MenuItem key={tag} value={tag}>
-                                        {tag}
-                                    </MenuItem>
-                                    ))}
-                                </Select>
-                                </FormControl>
+                                {/* Two Dropdowns for Hierarchical Tag Selection */}
+                                <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+                                    <FormControl fullWidth>
+                                        <InputLabel>Main Tag</InputLabel>
+                                        <Select
+                                            value={selectedMainTag}
+                                            label="Main Tag"
+                                            onChange={(e) => handleMainTagSelect(e.target.value)}
+                                        >
+                                            {Object.keys(TAG_STRUCTURE).map((mainTag) => (
+                                                <MenuItem key={mainTag} value={mainTag}>
+                                                    {mainTag}
+                                                </MenuItem>
+                                            ))}
+                                        </Select>
+                                    </FormControl>
+                                    
+                                    <FormControl fullWidth>
+                                        <InputLabel>Subtype</InputLabel>
+                                        <Select
+                                            value={selectedSubtag}
+                                            label="Subtype"
+                                            onChange={(e) => handleSubtagSelect(e.target.value)}
+                                            disabled={!selectedMainTag}
+                                        >
+                                            {availableSubtags.map((subtag) => (
+                                                <MenuItem key={subtag} value={subtag}>
+                                                    {subtag}
+                                                </MenuItem>
+                                            ))}
+                                        </Select>
+                                    </FormControl>
+                                </Box>
                                 
                                 <Box sx={{ display: 'flex', gap: 1 }}>
                                 <Button onClick={handleUpdateTag} variant="contained">Save Changes</Button>
@@ -1282,20 +1368,39 @@ const getTagStatus = (tag) => {
                                         </Box>
                                     )}
                                     
-                                    <FormControl fullWidth sx={{ mb: 2 }}>
-                                        <InputLabel>Tag Label</InputLabel>
-                                        <Select
-                                            value={newSelection.tag}
-                                            label="Tag Label"
-                                            onChange={(e) => setNewSelection(s => ({ ...s, tag: e.target.value }))}
-                                        >
-                                            {PREDEFINED_TAGS.map((tag) => (
-                                                <MenuItem key={tag} value={tag}>
-                                                    {tag}
-                                                </MenuItem>
-                                            ))}
-                                        </Select>
-                                    </FormControl>
+                                    {/* Two Dropdowns for Hierarchical Tag Selection */}
+                                    <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+                                        <FormControl fullWidth>
+                                            <InputLabel>Main Tag</InputLabel>
+                                            <Select
+                                                value={selectedMainTag}
+                                                label="Main Tag"
+                                                onChange={(e) => handleMainTagSelect(e.target.value)}
+                                            >
+                                                {Object.keys(TAG_STRUCTURE).map((mainTag) => (
+                                                    <MenuItem key={mainTag} value={mainTag}>
+                                                        {mainTag}
+                                                    </MenuItem>
+                                                ))}
+                                            </Select>
+                                        </FormControl>
+                                        
+                                        <FormControl fullWidth>
+                                            <InputLabel>Subtype</InputLabel>
+                                            <Select
+                                                value={selectedSubtag}
+                                                label="Subtype"
+                                                onChange={(e) => handleSubtagSelect(e.target.value)}
+                                                disabled={!selectedMainTag}
+                                            >
+                                                {availableSubtags.map((subtag) => (
+                                                    <MenuItem key={subtag} value={subtag}>
+                                                        {subtag}
+                                                    </MenuItem>
+                                                ))}
+                                            </Select>
+                                        </FormControl>
+                                    </Box>
                                     
                                     <Box sx={{ display: 'flex', gap: 1 }}>
                                         <Button onClick={handleSaveNewTag} variant="contained">Save Tag</Button>
@@ -1310,104 +1415,104 @@ const getTagStatus = (tag) => {
                                 <Box>
                                     <Typography variant="overline">TAGS FOR THIS SENTENCE</Typography> 
                                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-    {currentSentenceTags.map(tag => {
-        const isHierarchical = isHierarchicalTag(tag.tag);
-        const tagStatus = getTagStatus(tag);
-        const isPendingReview = tagStatus === 'pending';
-        
-        // Tooltip content based on tag type
-        const tooltipTitle = isHierarchical 
-            ? `Named Entity Tag - Cannot be edited or deleted`
-            : isPendingReview 
-                ? `Pending review - Click to edit, X to delete`
-                : `Approved - Annotated by: ${tag.username} - Click to edit, X to delete`;
+                                        {currentSentenceTags.map(tag => {
+                                            const isLocked = isHierarchicalTag(tag.tag); // Now checks if it's a predefined tag
+                                            const tagStatus = getTagStatus(tag);
+                                            const isPendingReview = tagStatus === 'pending';
+                                            
+                                            // Tooltip content based on tag type
+                                            const tooltipTitle = isLocked 
+                                                ? `MWE - Cannot be edited or deleted`
+                                                : isPendingReview 
+                                                    ? `Pending review - Click to edit, X to delete`
+                                                    : `Approved - Annotated by: ${tag.username} - Click to edit, X to delete`;
 
-        return (
-            <Tooltip key={tag._id} title={tooltipTitle} arrow>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Chip 
-                        label={
-                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                {tag.text} ({tag.tag})
-                                {isHierarchical && (
-                                    <Box sx={{ ml: 0.5, fontSize: '0.7rem', color: 'primary.main' }}>
-                                        🔒
-                                    </Box>
-                                )}
-                                {isPendingReview && (
-                                    <Box sx={{ 
-                                        ml: 1,
-                                        width: 8, 
-                                        height: 8, 
-                                        borderRadius: '50%', 
-                                        backgroundColor: '#ff9800',
-                                        animation: 'pulse 1.5s infinite'
-                                    }} />
-                                )}
-                            </Box>
-                        }
-                        onDelete={isHierarchical ? undefined : () => handleRemoveTag(tag._id)}
-                        onClick={isHierarchical ? undefined : () => handleStartEditTag(tag)} 
-                        color={isPendingReview ? "default" : "primary"}
-                        variant={isPendingReview ? "outlined" : "filled"}
-                        sx={{ 
-                            cursor: isHierarchical ? "default" : "pointer",
-                            border: isPendingReview ? '2px dashed #ff9800' : 'none',
-                            position: 'relative',
-                            opacity: isPendingReview ? 0.8 : 1,
-                            backgroundColor: isHierarchical ? '#e3f2fd' : undefined,
-                            '&:hover': {
-                                backgroundColor: isHierarchical ? '#e3f2fd' : undefined,
-                                transform: isHierarchical ? 'none' : 'scale(1.05)',
-                            },
-                            transition: 'all 0.2s ease-in-out',
-                        }}
-                    />
-                    
-                    {/* Individual Review Button */}
-                    {!isHierarchical && tagStatus === 'approved' && (
-                        <Tooltip title="Submit this tag for review">
-                            <IconButton 
-                                size="small" 
-                                color="primary"
-                                onClick={() => handleSubmitTagForReview(tag._id)}
-                                sx={{ 
-                                    bgcolor: 'primary.main',
-                                    color: 'white',
-                                    '&:hover': { bgcolor: 'primary.dark' }
-                                }}
-                            >
-                                <RateReviewIcon fontSize="small" />
-                            </IconButton>
-                        </Tooltip>
-                    )}
-                    
-                    {/* Cancel Review Button */}
-                    {!isHierarchical && tagStatus === 'pending' && (
-                        <Tooltip title="Cancel review request">
-                            <IconButton 
-                                size="small" 
-                                color="warning"
-                                onClick={() => handleCancelTagReview(tag._id)}
-                                sx={{ 
-                                    bgcolor: 'warning.main',
-                                    color: 'white',
-                                    '&:hover': { bgcolor: 'warning.dark' }
-                                }}
-                            >
-                                <AssignmentLateIcon fontSize="small" />
-                            </IconButton>
-                        </Tooltip>
-                    )}
-                </Box>
-            </Tooltip>
-        );
-    })}
+                                            return (
+                                                <Tooltip key={tag._id} title={tooltipTitle} arrow>
+                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                                        <Chip 
+                                                            label={
+                                                                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                                                    {tag.text} ({tag.tag})
+                                                                    {isLocked && (
+                                                                        <Box sx={{ ml: 0.5, fontSize: '0.7rem', color: 'primary.main' }}>
+                                                                            🔒
+                                                                        </Box>
+                                                                    )}
+                                                                    {isPendingReview && (
+                                                                        <Box sx={{ 
+                                                                            ml: 1,
+                                                                            width: 8, 
+                                                                            height: 8, 
+                                                                            borderRadius: '50%', 
+                                                                            backgroundColor: '#ff9800',
+                                                                            animation: 'pulse 1.5s infinite'
+                                                                        }} />
+                                                                    )}
+                                                                </Box>
+                                                            }
+                                                            onDelete={isLocked ? undefined : () => handleRemoveTag(tag._id)}
+                                                            onClick={isLocked ? undefined : () => handleStartEditTag(tag)} 
+                                                            color={isPendingReview ? "default" : "primary"}
+                                                            variant={isPendingReview ? "outlined" : "filled"}
+                                                            sx={{ 
+                                                                cursor: isLocked ? "default" : "pointer",
+                                                                border: isPendingReview ? '2px dashed #ff9800' : 'none',
+                                                                position: 'relative',
+                                                                opacity: isPendingReview ? 0.8 : 1,
+                                                                backgroundColor: isLocked ? '#e3f2fd' : undefined,
+                                                                '&:hover': {
+                                                                    backgroundColor: isLocked ? '#e3f2fd' : undefined,
+                                                                    transform: isLocked ? 'none' : 'scale(1.05)',
+                                                                },
+                                                                transition: 'all 0.2s ease-in-out',
+                                                            }}
+                                                        />
+                                                        
+                                                        {/* Individual Review Button - Only for editable tags */}
+                                                        {!isLocked && tagStatus === 'approved' && (
+                                                            <Tooltip title="Submit this tag for review">
+                                                                <IconButton 
+                                                                    size="small" 
+                                                                    color="primary"
+                                                                    onClick={() => handleSubmitTagForReview(tag._id)}
+                                                                    sx={{ 
+                                                                        bgcolor: 'primary.main',
+                                                                        color: 'white',
+                                                                        '&:hover': { bgcolor: 'primary.dark' }
+                                                                    }}
+                                                                >
+                                                                    <RateReviewIcon fontSize="small" />
+                                                                </IconButton>
+                                                            </Tooltip>
+                                                        )}
+                                                        
+                                                        {/* Cancel Review Button - Only for editable tags */}
+                                                        {!isLocked && tagStatus === 'pending' && (
+                                                            <Tooltip title="Cancel review request">
+                                                                <IconButton 
+                                                                    size="small" 
+                                                                    color="warning"
+                                                                    onClick={() => handleCancelTagReview(tag._id)}
+                                                                    sx={{ 
+                                                                        bgcolor: 'warning.main',
+                                                                        color: 'white',
+                                                                        '&:hover': { bgcolor: 'warning.dark' }
+                                                                    }}
+                                                                >
+                                                                    <AssignmentLateIcon fontSize="small" />
+                                                                </IconButton>
+                                                            </Tooltip>
+                                                        )}
+                                                    </Box>
+                                                </Tooltip>
+                                            );
+                                        })}
 
-    {currentSentenceTags.length === 0 && (
-        <Typography color="text.secondary">No tags yet. Highlight text to add one.</Typography>
-    )}
-</Box>
+                                        {currentSentenceTags.length === 0 && (
+                                            <Typography color="text.secondary">No tags yet. Highlight text to add one.</Typography>
+                                        )}
+                                        </Box>
 
                                     <Typography variant="overline" sx={{ mt: 3, display: 'block' }}>SENTENCE ACTIONS</Typography>
                                     <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>

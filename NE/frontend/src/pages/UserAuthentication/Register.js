@@ -222,6 +222,24 @@ export default function Register() {
                             disabled={isLoading}
                         />
                         
+                        <FormControl fullWidth margin="normal" required sx={{ mb: 2 }}>
+                            <InputLabel id="role-label">Role</InputLabel>
+                            <Select 
+                                labelId="role-label" 
+                                value={role} 
+                                onChange={handleRoleChange} // Use the updated handler
+                                label="Role" 
+                                startAdornment={<InputAdornment position="start"><GroupIcon color="action" /></InputAdornment>}
+                                disabled={isLoading}
+                            >
+                                {roleOptions.map((option) => (
+                                    <MenuItem key={option.value} value={option.value}>
+                                        {option.label}
+                                    </MenuItem>
+                                ))}
+                            </Select>
+                        </FormControl>
+                        
                         <FormControl 
                             fullWidth 
                             margin="normal" 
@@ -290,23 +308,7 @@ export default function Register() {
                             )}
                         </FormControl>
 
-                        <FormControl fullWidth margin="normal" required sx={{ mb: 2 }}>
-                            <InputLabel id="role-label">Role</InputLabel>
-                            <Select 
-                                labelId="role-label" 
-                                value={role} 
-                                onChange={handleRoleChange} // Use the updated handler
-                                label="Role" 
-                                startAdornment={<InputAdornment position="start"><GroupIcon color="action" /></InputAdornment>}
-                                disabled={isLoading}
-                            >
-                                {roleOptions.map((option) => (
-                                    <MenuItem key={option.value} value={option.value}>
-                                        {option.label}
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
+                        
                         
                         <FormControl fullWidth margin="normal" required={role.toLowerCase() !== 'developer'} sx={{ mb: 1 }}>
                             <InputLabel id="organization-label">Organization</InputLabel>
