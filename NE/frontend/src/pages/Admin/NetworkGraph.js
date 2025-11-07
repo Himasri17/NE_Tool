@@ -67,7 +67,7 @@ const NetworkGraph = ({ data }) => {
 
     // Add tooltips
     node.append('title')
-      .text(d => `${d.name}\nType: ${d.mwe_type}\nFrequency: ${d.value}`);
+      .text(d => `${d.name}\nType: ${d.ne_type}\nFrequency: ${d.value}`);
 
     // Update positions
     simulation.on('tick', () => {

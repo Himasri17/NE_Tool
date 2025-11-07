@@ -40,7 +40,7 @@ app.config['JWT_EXPIRATION_HOURS'] = 24
 
 # --- MongoDB Connection ---
 client = MongoClient("mongodb://localhost:27017/")
-db = client["MWE_TOOL"]
+db = client["ne_TOOL"]
 
 # --- Mail Configuration ---
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'  
@@ -2030,10 +2030,10 @@ def get_user_data(username):
 
 # --- Visualization & Analytics Endpoints (UNCHANGED) ---
 
-@app.route("/api/analytics/mwe-distribution", methods=["GET"])
+@app.route("/api/analytics/ne-distribution", methods=["GET"])
 @admin_required
-def get_mwe_distribution():
-    """Get comprehensive MWE analytics with enhanced metrics"""
+def get_ne_distribution():
+    """Get comprehensive NE analytics with enhanced metrics"""
     try:
         # Get optional filters from query parameters
         language = request.args.get("language")
@@ -2062,7 +2062,7 @@ def get_mwe_distribution():
         
         # Enhanced statistics with more metrics
         project_stats = {}
-        mwe_type_stats = {}
+        ne_type_stats = {}
         language_stats = {}
         user_stats = {}
         time_stats = {}
@@ -2074,37 +2074,37 @@ def get_mwe_distribution():
             sentence_id = tag.get("source_sentence_id")
             annotation_date = tag.get("annotation_date")
             
-            # Enhanced MWE type statistics
-            if tag_type not in mwe_type_stats:
-                mwe_type_stats[tag_type] = {
+            # Enhanced NE type statistics
+            if tag_type not in ne_type_stats:
+                ne_type_stats[tag_type] = {
                     "count": 0, 
                     "unique_words": set(),
                     "unique_users": set(),
                     "first_annotation": annotation_date,
                     "last_annotation": annotation_date
                 }
-            mwe_type_stats[tag_type]["count"] += 1
-            mwe_type_stats[tag_type]["unique_words"].add(tag_text)
-            mwe_type_stats[tag_type]["unique_users"].add(tag_user)
+            ne_type_stats[tag_type]["count"] += 1
+            ne_type_stats[tag_type]["unique_words"].add(tag_text)
+            ne_type_stats[tag_type]["unique_users"].add(tag_user)
             
             # Update date range
             if annotation_date:
-                if mwe_type_stats[tag_type]["first_annotation"] is None or annotation_date < mwe_type_stats[tag_type]["first_annotation"]:
-                    mwe_type_stats[tag_type]["first_annotation"] = annotation_date
-                if mwe_type_stats[tag_type]["last_annotation"] is None or annotation_date > mwe_type_stats[tag_type]["last_annotation"]:
-                    mwe_type_stats[tag_type]["last_annotation"] = annotation_date
+                if ne_type_stats[tag_type]["first_annotation"] is None or annotation_date < ne_type_stats[tag_type]["first_annotation"]:
+                    ne_type_stats[tag_type]["first_annotation"] = annotation_date
+                if ne_type_stats[tag_type]["last_annotation"] is None or annotation_date > ne_type_stats[tag_type]["last_annotation"]:
+                    ne_type_stats[tag_type]["last_annotation"] = annotation_date
             
             # Enhanced user statistics
             if tag_user not in user_stats:
                 user_stats[tag_user] = {
                     "count": 0, 
-                    "mwe_types": set(),
+                    "ne_types": set(),
                     "unique_phrases": set(),
                     "first_annotation": annotation_date,
                     "last_annotation": annotation_date
                 }
             user_stats[tag_user]["count"] += 1
-            user_stats[tag_user]["mwe_types"].add(tag_type)
+            user_stats[tag_user]["ne_types"].add(tag_type)
             user_stats[tag_user]["unique_phrases"].add(tag_text)
             
             # Time-based statistics (by month)
@@ -2140,24 +2140,24 @@ def get_mwe_distribution():
                     if project_name not in project_stats:
                         project_stats[project_name] = {
                             "count": 0,
-                            "mwe_types": set(),
+                            "ne_types": set(),
                             "users": set(),
                             "language": project_language
                         }
                     project_stats[project_name]["count"] += 1
-                    project_stats[project_name]["mwe_types"].add(tag_type)
+                    project_stats[project_name]["ne_types"].add(tag_type)
                     project_stats[project_name]["users"].add(tag_user)
                     
                     # Enhanced language stats
                     if project_language not in language_stats:
                         language_stats[project_language] = {
                             "count": 0, 
-                            "mwe_types": set(),
+                            "ne_types": set(),
                             "projects": set(),
                             "users": set()
                         }
                     language_stats[project_language]["count"] += 1
-                    language_stats[project_language]["mwe_types"].add(tag_type)
+                    language_stats[project_language]["ne_types"].add(tag_type)
                     language_stats[project_language]["projects"].add(project_name)
                     language_stats[project_language]["users"].add(tag_user)
         
@@ -2168,15 +2168,15 @@ def get_mwe_distribution():
                 "project_name": project_name,
                 "language": stats.get("language", "Unknown"),
                 "count": stats["count"],
-                "mwe_type_count": len(stats["mwe_types"]),
+                "ne_type_count": len(stats["ne_types"]),
                 "user_count": len(stats["users"]),
-                "mwe_types": list(stats["mwe_types"])[:10]  # Top 10 MWE types
+                "ne_types": list(stats["ne_types"])[:10]  # Top 10 NE types
             })
         
-        mwe_types_distribution = []
-        for mwe_type, stats in mwe_type_stats.items():
-            mwe_types_distribution.append({
-                "mwe_type": mwe_type,
+        ne_types_distribution = []
+        for ne_type, stats in ne_type_stats.items():
+            ne_types_distribution.append({
+                "ne_type": ne_type,
                 "count": stats["count"],
                 "unique_word_count": len(stats["unique_words"]),
                 "unique_user_count": len(stats["unique_users"]),
@@ -2190,7 +2190,7 @@ def get_mwe_distribution():
             language_distribution.append({
                 "language": lang,
                 "count": stats["count"],
-                "mwe_type_count": len(stats["mwe_types"]),
+                "ne_type_count": len(stats["ne_types"]),
                 "project_count": len(stats["projects"]),
                 "user_count": len(stats["users"])
             })
@@ -2200,11 +2200,11 @@ def get_mwe_distribution():
             user_distribution.append({
                 "username": user,
                 "count": stats["count"],
-                "mwe_type_count": len(stats["mwe_types"]),
+                "ne_type_count": len(stats["ne_types"]),
                 "unique_phrase_count": len(stats["unique_phrases"]),
                 "first_annotation": stats["first_annotation"].isoformat() if stats["first_annotation"] else None,
                 "last_annotation": stats["last_annotation"].isoformat() if stats["last_annotation"] else None,
-                "productivity_score": stats["count"] / max(len(stats["mwe_types"]), 1)
+                "productivity_score": stats["count"] / max(len(stats["ne_types"]), 1)
             })
         
         # Time distribution
@@ -2220,10 +2220,10 @@ def get_mwe_distribution():
         total_users = len(user_stats)
         total_projects = len(project_stats)
         total_languages = len(language_stats)
-        total_mwe_types = len(mwe_type_stats)
+        total_ne_types = len(ne_type_stats)
         
         avg_annotations_per_user = len(all_tags) / max(total_users, 1)
-        avg_mwe_types_per_user = sum(len(stats["mwe_types"]) for stats in user_stats.values()) / max(total_users, 1)
+        avg_ne_types_per_user = sum(len(stats["ne_types"]) for stats in user_stats.values()) / max(total_users, 1)
         
         print(f"DEBUG: Enhanced analytics processed - Tags: {len(all_tags)}, Users: {total_users}, Projects: {total_projects}")
         
@@ -2233,34 +2233,34 @@ def get_mwe_distribution():
                 "total_users": total_users,
                 "total_projects": total_projects,
                 "total_languages": total_languages,
-                "total_mwe_types": total_mwe_types,
+                "total_ne_types": total_ne_types,
                 "avg_annotations_per_user": round(avg_annotations_per_user, 2),
-                "avg_mwe_types_per_user": round(avg_mwe_types_per_user, 2),
+                "avg_ne_types_per_user": round(avg_ne_types_per_user, 2),
                 "time_period": {
                     "start_date": start_date,
                     "end_date": end_date
                 }
             },
-            "mwe_types": sorted(mwe_types_distribution, key=lambda x: x["count"], reverse=True),
+            "ne_types": sorted(ne_types_distribution, key=lambda x: x["count"], reverse=True),
             "language_distribution": sorted(language_distribution, key=lambda x: x["count"], reverse=True),
             "user_distribution": sorted(user_distribution, key=lambda x: x["count"], reverse=True),
             "project_distribution": sorted(project_distribution, key=lambda x: x["count"], reverse=True),
             "time_distribution": time_distribution,
             "top_performers": sorted(user_distribution, key=lambda x: x["count"], reverse=True)[:10],
-            "most_common_mwe": sorted(mwe_types_distribution, key=lambda x: x["count"], reverse=True)[:10]
+            "most_common_ne": sorted(ne_types_distribution, key=lambda x: x["count"], reverse=True)[:10]
         }), 200
         
     except Exception as e:
-        print(f"Error in enhanced MWE distribution: {e}")
+        print(f"Error in enhanced NE distribution: {e}")
         print(f"Error details: {traceback.format_exc()}")
         return jsonify({"error": "Internal server error"}), 500
     
       
-@app.route("/api/analytics/mwe-network", methods=["GET"])
-def get_mwe_network():
-    """Generate network data for MWE relationships"""
+@app.route("/api/analytics/ne-network", methods=["GET"])
+def get_ne_network():
+    """Generate network data for NE relationships"""
     try:
-        # Get all MWE annotations
+        # Get all NE annotations
         all_tags = list(tags_collection.find({}, {
             "text": 1, 
             "tag": 1, 
@@ -2274,15 +2274,15 @@ def get_mwe_network():
         node_counter = 0
         
         # Helper function to add or get node ID
-        def get_node_id(text, mwe_type):
+        def get_node_id(text, ne_type):
             nonlocal node_counter
-            key = f"{text}_{mwe_type}"
+            key = f"{text}_{ne_type}"
             if key not in node_ids:
                 node_ids[key] = node_counter
                 nodes.append({
                     "id": node_counter,
                     "name": text,
-                    "mwe_type": mwe_type,
+                    "ne_type": ne_type,
                     "value": 1  # Will be updated with frequency
                 })
                 node_counter += 1
@@ -2291,23 +2291,23 @@ def get_mwe_network():
         # First pass: create nodes and count frequencies
         for tag in all_tags:
             text = tag.get("text", "").strip().lower()
-            mwe_type = tag.get("tag", "Unknown")
+            ne_type = tag.get("tag", "Unknown")
             if text:
-                node_id = get_node_id(text, mwe_type)
+                node_id = get_node_id(text, ne_type)
                 nodes[node_id]["value"] += 1
         
         # Second pass: create links based on shared roots and relationships
-        mwe_by_type = {}
+        ne_by_type = {}
         for tag in all_tags:
             text = tag.get("text", "").strip().lower()
-            mwe_type = tag.get("tag", "Unknown")
-            if text and mwe_type:
-                if mwe_type not in mwe_by_type:
-                    mwe_by_type[mwe_type] = []
-                mwe_by_type[mwe_type].append(text)
+            ne_type = tag.get("tag", "Unknown")
+            if text and ne_type:
+                if ne_type not in ne_by_type:
+                    ne_by_type[ne_type] = []
+                ne_by_type[ne_type].append(text)
         
-        # Create links within same MWE types (clustering)
-        for mwe_type, words in mwe_by_type.items():
+        # Create links within same NE types (clustering)
+        for ne_type, words in ne_by_type.items():
             # Simple stemming-based relationships
             word_stems = {}
             for word in words:
@@ -2324,8 +2324,8 @@ def get_mwe_network():
                     for i, word1 in enumerate(stem_words):
                         for word2 in stem_words[i+1:]:
                             if word1 != word2:
-                                source_id = get_node_id(word1, mwe_type)
-                                target_id = get_node_id(word2, mwe_type)
+                                source_id = get_node_id(word1, ne_type)
+                                target_id = get_node_id(word2, ne_type)
                                 
                                 # Check if link already exists
                                 existing_link = next(
@@ -2357,7 +2357,7 @@ def get_mwe_network():
         }), 200
         
     except Exception as e:
-        print(f"Error generating MWE network: {e}")
+        print(f"Error generating NE network: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
 @app.route("/api/analytics/annotation-timeline", methods=["GET"])
@@ -2553,12 +2553,12 @@ def download_analytics_report():
             user_tags = list(tags_collection.find({"username": username}))
             user_tags_count = len(user_tags)
             
-            # User MWE type diversity
-            user_mwe_types = set(tag.get("tag", "Unknown") for tag in user_tags)
+            # User NE type diversity
+            user_ne_types = set(tag.get("tag", "Unknown") for tag in user_tags)
             
             # Calculate enhanced metrics
             approval_rate = (user_annotated_sentences / user_total_sentences * 100) if user_total_sentences > 0 else 0
-            productivity_score = user_tags_count / max(len(user_mwe_types), 1)
+            productivity_score = user_tags_count / max(len(user_ne_types), 1)
             
             user_stats.append({
                 "username": username,
@@ -2568,20 +2568,20 @@ def download_analytics_report():
                 "total_sentences": user_total_sentences,
                 "annotated_sentences": user_annotated_sentences,
                 "total_annotations": user_tags_count,
-                "mwe_type_diversity": len(user_mwe_types),
+                "ne_type_diversity": len(user_ne_types),
                 "approval_rate": round(approval_rate, 1),
                 "productivity_score": round(productivity_score, 2),
                 "status": "Active" if user_tags_count > 0 else "Inactive"
             })
 
-        # Enhanced MWE type statistics
-        mwe_stats = []
-        mwe_type_counts = {}
+        # Enhanced NE type statistics
+        ne_stats = []
+        ne_type_counts = {}
         
         for tag in all_tags:
-            mwe_type = tag.get("tag", "Unknown")
-            if mwe_type not in mwe_type_counts:
-                mwe_type_counts[mwe_type] = {
+            ne_type = tag.get("tag", "Unknown")
+            if ne_type not in ne_type_counts:
+                ne_type_counts[ne_type] = {
                     "count": 0,
                     "unique_phrases": set(),
                     "unique_annotators": set(),
@@ -2589,27 +2589,27 @@ def download_analytics_report():
                     "first_annotation": tag.get("annotation_date"),
                     "last_annotation": tag.get("annotation_date")
                 }
-            mwe_type_counts[mwe_type]["count"] += 1
-            mwe_type_counts[mwe_type]["unique_phrases"].add(tag.get("text", "").lower())
-            mwe_type_counts[mwe_type]["unique_annotators"].add(tag.get("username", ""))
+            ne_type_counts[ne_type]["count"] += 1
+            ne_type_counts[ne_type]["unique_phrases"].add(tag.get("text", "").lower())
+            ne_type_counts[ne_type]["unique_annotators"].add(tag.get("username", ""))
             
             # Track projects
             if tag.get("source_sentence_id"):
                 sentence = sentences_collection.find_one({"_id": ObjectId(tag["source_sentence_id"])})
                 if sentence and sentence.get("project_id"):
-                    mwe_type_counts[mwe_type]["projects"].add(sentence["project_id"])
+                    ne_type_counts[ne_type]["projects"].add(sentence["project_id"])
             
             # Update date range
             annotation_date = tag.get("annotation_date")
             if annotation_date:
-                if mwe_type_counts[mwe_type]["first_annotation"] is None or annotation_date < mwe_type_counts[mwe_type]["first_annotation"]:
-                    mwe_type_counts[mwe_type]["first_annotation"] = annotation_date
-                if mwe_type_counts[mwe_type]["last_annotation"] is None or annotation_date > mwe_type_counts[mwe_type]["last_annotation"]:
-                    mwe_type_counts[mwe_type]["last_annotation"] = annotation_date
+                if ne_type_counts[ne_type]["first_annotation"] is None or annotation_date < ne_type_counts[ne_type]["first_annotation"]:
+                    ne_type_counts[ne_type]["first_annotation"] = annotation_date
+                if ne_type_counts[ne_type]["last_annotation"] is None or annotation_date > ne_type_counts[ne_type]["last_annotation"]:
+                    ne_type_counts[ne_type]["last_annotation"] = annotation_date
         
-        for mwe_type, stats in mwe_type_counts.items():
-            mwe_stats.append({
-                "mwe_type": mwe_type,
+        for ne_type, stats in ne_type_counts.items():
+            ne_stats.append({
+                "ne_type": ne_type,
                 "count": stats["count"],
                 "unique_phrases_count": len(stats["unique_phrases"]),
                 "unique_annotators_count": len(stats["unique_annotators"]),
@@ -2720,7 +2720,7 @@ def download_analytics_report():
             if detail_level in ["detailed", "comprehensive"]:
                 # User Performance Dashboard
                 writer.writerow(["USER PERFORMANCE DASHBOARD"])
-                writer.writerow(["Username", "Full Name", "Role", "Organization", "Total Sentences", "Annotated Sentences", "Total Annotations", "MWE Diversity", "Approval Rate", "Productivity Score", "Status"])
+                writer.writerow(["Username", "Full Name", "Role", "Organization", "Total Sentences", "Annotated Sentences", "Total Annotations", "NE Diversity", "Approval Rate", "Productivity Score", "Status"])
                 for user in sorted(user_stats, key=lambda x: x["total_annotations"], reverse=True):
                     writer.writerow([
                         user["username"],
@@ -2730,26 +2730,26 @@ def download_analytics_report():
                         user["total_sentences"],
                         user["annotated_sentences"],
                         user["total_annotations"],
-                        user["mwe_type_diversity"],
+                        user["ne_type_diversity"],
                         f"{user['approval_rate']}%",
                         user["productivity_score"],
                         user["status"]
                     ])
                 writer.writerow([])
             
-            # MWE Statistics
-            writer.writerow(["MWE TYPE STATISTICS"])
-            writer.writerow(["MWE Type", "Count", "Unique Phrases", "Unique Annotators", "Projects", "First Annotation", "Last Annotation", "Popularity"])
-            for mwe in sorted(mwe_stats, key=lambda x: x["count"], reverse=True):
+            # NE Statistics
+            writer.writerow(["NE TYPE STATISTICS"])
+            writer.writerow(["NE Type", "Count", "Unique Phrases", "Unique Annotators", "Projects", "First Annotation", "Last Annotation", "Popularity"])
+            for ne in sorted(ne_stats, key=lambda x: x["count"], reverse=True):
                 writer.writerow([
-                    mwe["mwe_type"],
-                    mwe["count"],
-                    mwe["unique_phrases_count"],
-                    mwe["unique_annotators_count"],
-                    mwe["project_count"],
-                    mwe["first_annotation"],
-                    mwe["last_annotation"],
-                    mwe["popularity_rank"]
+                    ne["ne_type"],
+                    ne["count"],
+                    ne["unique_phrases_count"],
+                    ne["unique_annotators_count"],
+                    ne["project_count"],
+                    ne["first_annotation"],
+                    ne["last_annotation"],
+                    ne["popularity_rank"]
                 ])
             writer.writerow([])
             
@@ -2773,7 +2773,7 @@ def download_analytics_report():
             if detail_level == "comprehensive":
                 writer.writerow([])
                 writer.writerow(["DETAILED ANNOTATION DATA"])
-                writer.writerow(["Annotation ID", "MWE Type", "Phrase", "Annotator", "Project", "Sentence Text Preview", "Annotation Date"])
+                writer.writerow(["Annotation ID", "NE Type", "Phrase", "Annotator", "Project", "Sentence Text Preview", "Annotation Date"])
                 for i, tag in enumerate(all_tags[:1000]):  # Limit to first 1000 for file size
                     sentence_text = "N/A"
                     project_name = "N/A"
@@ -2824,11 +2824,11 @@ def download_analytics_report():
                     "avg_annotations_per_user": round((len(all_tags)/max(total_annotators, 1)), 1)
                 },
                 "user_performance": sorted(user_stats, key=lambda x: x["total_annotations"], reverse=True),
-                "mwe_statistics": sorted(mwe_stats, key=lambda x: x["count"], reverse=True),
+                "ne_statistics": sorted(ne_stats, key=lambda x: x["count"], reverse=True),
                 "project_statistics": sorted(project_stats, key=lambda x: x["completion_rate"], reverse=True),
                 "key_insights": {
                     "top_performer": max(user_stats, key=lambda x: x["total_annotations"]) if user_stats else None,
-                    "most_common_mwe": max(mwe_stats, key=lambda x: x["count"]) if mwe_stats else None,
+                    "most_common_ne": max(ne_stats, key=lambda x: x["count"]) if ne_stats else None,
                     "most_complete_project": max(project_stats, key=lambda x: x["completion_rate"]) if project_stats else None,
                     "annotation_trend": "Growing" if len(all_tags) > 1000 else "Stable" if len(all_tags) > 500 else "Developing"
                 }
@@ -2868,7 +2868,7 @@ def download_pdf_with_charts():
         
         # Calculate statistics (same as your existing analytics logic)
         project_stats = {}
-        mwe_type_stats = {}
+        ne_type_stats = {}
         language_stats = {}
         user_stats = {}
         
@@ -2877,17 +2877,17 @@ def download_pdf_with_charts():
             tag_user = tag.get("username", "Unknown")
             sentence_id = tag.get("source_sentence_id")
             
-            # Count by MWE type
-            if tag_type not in mwe_type_stats:
-                mwe_type_stats[tag_type] = {"count": 0, "unique_words": set()}
-            mwe_type_stats[tag_type]["count"] += 1
-            mwe_type_stats[tag_type]["unique_words"].add(tag.get("text", "").lower())
+            # Count by NE type
+            if tag_type not in ne_type_stats:
+                ne_type_stats[tag_type] = {"count": 0, "unique_words": set()}
+            ne_type_stats[tag_type]["count"] += 1
+            ne_type_stats[tag_type]["unique_words"].add(tag.get("text", "").lower())
             
             # Count by user
             if tag_user not in user_stats:
-                user_stats[tag_user] = {"count": 0, "mwe_types": set()}
+                user_stats[tag_user] = {"count": 0, "ne_types": set()}
             user_stats[tag_user]["count"] += 1
-            user_stats[tag_user]["mwe_types"].add(tag_type)
+            user_stats[tag_user]["ne_types"].add(tag_type)
             
             # Count by project and language
             if sentence_id:
@@ -2914,22 +2914,22 @@ def download_pdf_with_charts():
                     if project_name not in project_stats:
                         project_stats[project_name] = {
                             "count": 0,
-                            "mwe_types": set()
+                            "ne_types": set()
                         }
                     project_stats[project_name]["count"] += 1
-                    project_stats[project_name]["mwe_types"].add(tag_type)
+                    project_stats[project_name]["ne_types"].add(tag_type)
                     
                     # Update language stats
                     if project_language not in language_stats:
-                        language_stats[project_language] = {"count": 0, "mwe_types": set()}
+                        language_stats[project_language] = {"count": 0, "ne_types": set()}
                     language_stats[project_language]["count"] += 1
-                    language_stats[project_language]["mwe_types"].add(tag_type)
+                    language_stats[project_language]["ne_types"].add(tag_type)
         
         # Convert to chart-ready formats
-        mwe_chart_data = []
-        for mwe_type, stats in mwe_type_stats.items():
-            mwe_chart_data.append({
-                "mwe_type": mwe_type,
+        ne_chart_data = []
+        for ne_type, stats in ne_type_stats.items():
+            ne_chart_data.append({
+                "ne_type": ne_type,
                 "count": stats["count"],
                 "unique_word_count": len(stats["unique_words"])
             })
@@ -2946,7 +2946,7 @@ def download_pdf_with_charts():
             user_chart_data.append({
                 "username": user,
                 "count": stats["count"],
-                "mwe_type_count": len(stats["mwe_types"])
+                "ne_type_count": len(stats["ne_types"])
             })
         
         project_chart_data = []
@@ -2954,7 +2954,7 @@ def download_pdf_with_charts():
             project_chart_data.append({
                 "project_name": project_name,
                 "count": stats["count"],
-                "mwe_type_count": len(stats["mwe_types"])
+                "ne_type_count": len(stats["ne_types"])
             })
         
         # Get timeline data
@@ -3026,14 +3026,14 @@ def download_pdf_with_charts():
         return jsonify({
             "summary": {
                 "total_annotations": len(all_tags),
-                "total_mwe_types": len(mwe_type_stats),
+                "total_ne_types": len(ne_type_stats),
                 "total_languages": len(language_stats),
                 "total_users": len(user_stats),
                 "total_projects": len(project_stats),
                 "report_generated": get_ist_time().strftime("%Y-%m-%d %H:%M:%S UTC")
             },
             "charts": {
-                "mwe_distribution": mwe_chart_data,
+                "ne_distribution": ne_chart_data,
                 "language_distribution": language_chart_data,
                 "user_distribution": user_chart_data,
                 "project_distribution": project_chart_data,
@@ -3082,7 +3082,7 @@ def generate_chart():
         colors = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4']
         
         for i, item in enumerate(chart_data):
-            label_key = next((key for key in ['mwe_type', 'language', 'username', 'project_name'] if key in item), 'label')
+            label_key = next((key for key in ['ne_type', 'language', 'username', 'project_name'] if key in item), 'label')
             value_key = next((key for key in ['count', 'value'] if key in item), 'value')
             
             labels.append(item.get(label_key, f'Item {i+1}'))
@@ -3181,7 +3181,7 @@ def get_comprehensive_report():
             {"$group": {
                 "_id": "$username",
                 "total_annotations": {"$sum": 1},
-                "unique_mwe_types": {"$addToSet": "$tag"},
+                "unique_ne_types": {"$addToSet": "$tag"},
                 "unique_phrases": {"$addToSet": "$text"},
                 "projects": {"$addToSet": "$source_sentence_id"},
                 "first_annotation": {"$min": "$annotation_date"},
@@ -3208,7 +3208,7 @@ def get_comprehensive_report():
             {"$project": {
                 "username": "$_id",
                 "total_annotations": 1,
-                "unique_mwe_count": {"$size": "$unique_mwe_types"},
+                "unique_ne_count": {"$size": "$unique_ne_types"},
                 "unique_phrases_count": {"$size": "$unique_phrases"},
                 "project_count": {"$size": {
                     "$setUnion": [
@@ -3347,14 +3347,14 @@ def get_comprehensive_report():
                 },
                 "daily_annotations": {"$sum": 1},
                 "unique_annotators": {"$addToSet": "$username"},
-                "mwe_types_used": {"$addToSet": "$tag"}
+                "ne_types_used": {"$addToSet": "$tag"}
             }},
             {"$sort": {"_id": 1}},
             {"$project": {
                 "date": "$_id",
                 "daily_annotations": 1,
                 "unique_annotators_count": {"$size": "$unique_annotators"},
-                "mwe_types_count": {"$size": "$mwe_types_used"},
+                "ne_types_count": {"$size": "$ne_types_used"},
                 "avg_annotations_per_user": {
                     "$divide": ["$daily_annotations", {"$max": [{"$size": "$unique_annotators"}, 1]}]
                 },
@@ -3376,8 +3376,8 @@ def get_comprehensive_report():
         else:
             growth_rate = 0
         
-        # Enhanced MWE type distribution with trends
-        mwe_distribution = list(tags_collection.aggregate([
+        # Enhanced NE type distribution with trends
+        ne_distribution = list(tags_collection.aggregate([
             {"$match": tag_filter},
             {"$group": {
                 "_id": "$tag",
@@ -3389,7 +3389,7 @@ def get_comprehensive_report():
                 "projects": {"$addToSet": "$source_sentence_id"}
             }},
             {"$project": {
-                "mwe_type": "$_id",
+                "ne_type": "$_id",
                 "count": 1,
                 "unique_phrases_count": {"$size": "$unique_phrases"},
                 "unique_users_count": {"$size": "$unique_users"},
@@ -3441,7 +3441,7 @@ def get_comprehensive_report():
         quality_metrics = {
             "average_annotations_per_user": total_annotations / max(len(user_performance), 1),
             "top_performer": user_performance[0] if user_performance else None,
-            "most_common_mwe": mwe_distribution[0] if mwe_distribution else None,
+            "most_common_ne": ne_distribution[0] if ne_distribution else None,
             "total_projects": len(project_progress),
             "active_projects": len([p for p in project_progress if p.get('completion_rate', 0) < 100 and p.get('completion_rate', 0) > 0]),
             "completed_projects": len([p for p in project_progress if p.get('completion_rate', 0) == 100]),
@@ -3460,19 +3460,19 @@ def get_comprehensive_report():
             },
             "detailed": {
                 **quality_metrics,
-                "mwe_diversity": len(mwe_distribution),
+                "ne_diversity": len(ne_distribution),
                 "avg_project_completion": sum(p.get('completion_rate', 0) for p in project_progress) / max(len(project_progress), 1),
-                "annotation_consistency": "High" if len(set(mwe.get('mwe_type') for mwe in mwe_distribution)) > 10 else "Medium"
+                "annotation_consistency": "High" if len(set(ne.get('ne_type') for ne in ne_distribution)) > 10 else "Medium"
             },
             "executive": {
                 "performance_rating": "Excellent" if quality_metrics['user_engagement_score'] > 80 else "Good" if quality_metrics['user_engagement_score'] > 60 else "Needs Improvement",
                 "key_achievements": [
                     f"{quality_metrics['completed_projects']} projects completed",
                     f"{total_annotations} total annotations",
-                    f"{len(mwe_distribution)} MWE types identified"
+                    f"{len(ne_distribution)} NE types identified"
                 ],
                 "recommendations": [
-                    "Increase user training on rare MWE types" if any(mwe.get('unique_users_count', 0) < 3 for mwe in mwe_distribution) else "Maintain current annotation quality",
+                    "Increase user training on rare NE types" if any(ne.get('unique_users_count', 0) < 3 for ne in ne_distribution) else "Maintain current annotation quality",
                     "Focus on incomplete projects" if quality_metrics['active_projects'] > 2 else "All projects are on track"
                 ]
             }
@@ -3495,12 +3495,12 @@ def get_comprehensive_report():
             "user_performance": user_performance,
             "project_progress": project_progress,
             "timeline_data": timeline_data,
-            "mwe_distribution": mwe_distribution,
+            "ne_distribution": ne_distribution,
             "quality_metrics": quality_metrics,
             "key_insights": {
                 "busiest_day": max(timeline_data, key=lambda x: x['daily_annotations']) if timeline_data else None,
                 "most_productive_user": max(user_performance, key=lambda x: x['total_annotations']) if user_performance else None,
-                "most_diverse_annotator": max(user_performance, key=lambda x: x['unique_mwe_count']) if user_performance else None,
+                "most_diverse_annotator": max(user_performance, key=lambda x: x['unique_ne_count']) if user_performance else None,
                 "most_complex_project": max(project_progress, key=lambda x: x.get('total_annotations', 0)) if project_progress else None
             }
         }), 200
@@ -4472,16 +4472,16 @@ def download_project_data(project_id):
                     output_lines.append(f"  {annotator}: {stats['annotations']} annotations across {stats['sentences']} sentences")
                 output_lines.append("")
                 
-                # MWE type statistics
-                mwe_stats = {}
+                # NE type statistics
+                ne_stats = {}
                 for sentence in unique_sentences:
                     for annotation in sentence.get("annotations", []):
-                        mwe_type = annotation.get("tag", "Unknown")
-                        mwe_stats[mwe_type] = mwe_stats.get(mwe_type, 0) + 1
+                        ne_type = annotation.get("tag", "Unknown")
+                        ne_stats[ne_type] = ne_stats.get(ne_type, 0) + 1
                 
-                output_lines.append("MWE TYPE DISTRIBUTION:")
-                for mwe_type, count in sorted(mwe_stats.items(), key=lambda x: x[1], reverse=True):
-                    output_lines.append(f"  {mwe_type}: {count} occurrences")
+                output_lines.append("NE TYPE DISTRIBUTION:")
+                for ne_type, count in sorted(ne_stats.items(), key=lambda x: x[1], reverse=True):
+                    output_lines.append(f"  {ne_type}: {count} occurrences")
                 
             else:
                 # Full annotation report
@@ -4521,7 +4521,7 @@ def download_project_data(project_id):
 
                             # Enhanced annotation line
                             output_lines.append(
-                                f"  MWE: {tag_label}, Phrase: '{tag_text}', Annotator: {annotated_by}, Date: {annotation_dt_str}, ID: {tag_doc.get('_id', 'N/A')}"
+                                f"  NE: {tag_label}, Phrase: '{tag_text}', Annotator: {annotated_by}, Date: {annotation_dt_str}, ID: {tag_doc.get('_id', 'N/A')}"
                             )
 
                     output_lines.append("") # Empty line for separation
@@ -4950,7 +4950,7 @@ def get_project_sentences(project_id):
                     "tag": tag.get("tag", ""),
                     "username": tag.get("username", ""),
                     "annotation_date": tag.get("annotation_date"),
-                    "mweId": tag.get("mweId"),
+                    "neId": tag.get("neId"),
                     "_id": str(tag["_id"]),
                     "review_status": "Approved", 
                     "review_comments": tag.get("review_comments", "")
@@ -4966,7 +4966,7 @@ def get_project_sentences(project_id):
                     "tag": tag.get("tag", ""),
                     "username": tag.get("username", ""),
                     "annotation_date": tag.get("annotation_date"),
-                    "mweId": tag.get("mweId"),
+                    "neId": tag.get("neId"),
                     "_id": str(tag["_id"]),
                     "review_comments": tag.get("review_comments", "")
                 }

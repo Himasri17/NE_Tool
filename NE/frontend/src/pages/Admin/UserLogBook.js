@@ -135,7 +135,7 @@ export default function UserLogbook() {
                 // Include annotation activities
                 if (task.toLowerCase().includes('annotat') || 
                     task.toLowerCase().includes('tag') ||
-                    task.toLowerCase().includes('mwe') ||
+                    task.toLowerCase().includes('ne') ||
                     task.toLowerCase().includes('phrase')) {
                     return true;
                 }
@@ -201,7 +201,7 @@ export default function UserLogbook() {
                 // Track annotation activities
                 if (task.toLowerCase().includes('annotat') || 
                     task.toLowerCase().includes('tag') ||
-                    task.toLowerCase().includes('mwe') ||
+                    task.toLowerCase().includes('ne') ||
                     task.toLowerCase().includes('phrase')) {
                     
                     if (task.toLowerCase().includes('annotat')) {

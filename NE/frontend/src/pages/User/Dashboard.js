@@ -965,8 +965,8 @@ const getTagStatus = (tag) => {
     
     // --- NEW: Navigation Item List ---
     const navItems = [
-        { name: 'User Guidelines', action: () => window.open('/MWE Tool - User Guidelines.pdf', '_blank'), icon: RuleIcon, path: null },
-        { name: 'Annotation Guidelines', action: () => window.open('/MWE_Guidelines.pdf', '_blank'), icon: DescriptionIcon, path: null },
+        { name: 'User Guidelines', action: () => window.open('/NE Tool - User Guidelines.pdf', '_blank'), icon: RuleIcon, path: null },
+        { name: 'Annotation Guidelines', action: () => window.open('/ne_Guidelines.pdf', '_blank'), icon: DescriptionIcon, path: null },
         { name: 'Give Feedback', action: () => setIsFeedbackOpen(true), icon: FeedbackIcon, path: null },
         { name: 'Revision Notes', action: () => setIsRevisionNotesDialogOpen(true), icon: AssignmentLateIcon, path: null, badge: revisionList.length },
         { name: 'Tag Statistics', action: handleOpenStats, icon: QueryStatsIcon, path: null },
@@ -999,7 +999,7 @@ const getTagStatus = (tag) => {
                         </Badge>
                     </IconButton>
                     <Typography variant="h6" fontWeight={500}>
-                    MWE Annotator - {userData?.full_name || userData?.username || username || "User"}
+                    NE Annotator - {userData?.full_name || userData?.username || username || "User"}
                     </Typography>
                 </Box>
 

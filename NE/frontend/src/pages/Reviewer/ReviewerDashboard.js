@@ -442,7 +442,7 @@ export default function ReviewerDashboard() {
                     display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '60px', 
                     bgcolor: theme.palette.primary.main, color: 'white', p: 2, width: '100%', boxSizing: 'border-box'
                 }}>
-                    <Typography variant="h6" fontWeight={500}>MWE Expression Workbench</Typography>
+                    <Typography variant="h6" fontWeight={500}>NE Expression Workbench</Typography>
                     <CircularProgress size={20} color="inherit" />
                 </Box>
                 <Box sx={{ flexGrow: 1, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
@@ -476,7 +476,7 @@ export default function ReviewerDashboard() {
                 boxSizing: 'border-box',
                 flexShrink: 0
             }}>
-                <Typography variant="h6" fontWeight={500}>MWE Expression Workbench</Typography>
+                <Typography variant="h6" fontWeight={500}>NE Expression Workbench</Typography>
                 <Button 
                     variant="outlined" 
                     size="small" 
@@ -619,7 +619,7 @@ export default function ReviewerDashboard() {
                 <Button size="small" sx={{ mr: 2 }} onClick={handleOpenFeedbackDialog}>FEEDBACK</Button>
                 <Button size="small" onClick={handleTerms}>TERMS</Button>
                 <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-                    © 2025 MWE Annotation Platform. All rights reserved.
+                    © 2025 NE Annotation Platform. All rights reserved.
                 </Typography>
             </Box>
 
