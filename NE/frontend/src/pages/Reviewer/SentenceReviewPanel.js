@@ -782,7 +782,7 @@ export default function SentenceReviewPanel() {
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '60px', 
                 bgcolor: theme.palette.primary.light, color: 'black', p: 2, width: '100vw', boxSizing: 'border-box', margin: 0
             }}>
-                <Typography variant="h6" fontWeight={500} sx={{ mx: 1 }}>Multiword Expression Workbench</Typography>
+                <Typography variant="h6" fontWeight={500} sx={{ mx: 1 }}>Named Entity Workbench</Typography>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}> 
                     <Button variant="outlined" size="small" sx={{ color: 'black', borderColor: 'black' }} onClick={handleLogout}>LOG OUT</Button>
                 </Box>
