@@ -30,6 +30,14 @@ import jwt
 from functools import wraps
 from flask import request, jsonify
 
+# NEW: IndicNLP + optional NLTK for English
+from indicnlp.tokenize import sentence_tokenize
+from indicnlp.normalize.indic_normalize import IndicNormalizerFactory
+
+try:
+    from nltk.tokenize import sent_tokenize as en_sent_tokenize
+except ImportError:
+    en_sent_tokenize = None
 
 # --- Flask App Initialization ---
 app = Flask(__name__)
@@ -91,6 +99,45 @@ def get_ist_time():
     """Get current IST time"""
     IST = ZoneInfo("Asia/Kolkata")
     return datetime.now(IST)
+
+def split_manipuri_sentences(text):
+    # Manipuri-specific delimiters including Chakhei (꯫) and others
+    delimiters = [
+        '\uABEB',  # Manipuri Chakhei (꯫)
+        '!',
+        '?',
+        '।',       # Devanagari Danda
+        '॥',       # Devanagari Double Danda
+        '\n\n'     # Double newlines
+    ]
+    
+    # Create regex pattern that matches any delimiter followed by optional whitespace
+    pattern = r'([' + ''.join(delimiters) + r']+\s*)'
+
+    
+    # Split text while keeping delimiters
+    parts = re.split(pattern, text)
+    
+    sentences = []
+    current_sentence = ''
+    
+    for part in parts:
+        if not part.strip():
+            continue
+            
+        # If part is a delimiter, finalize current sentence
+        if re.fullmatch(pattern, part):
+            if current_sentence:
+                sentences.append(current_sentence.strip())
+                current_sentence = ''
+        else:
+            current_sentence += part
+    
+    # Add any remaining text
+    if current_sentence.strip():
+        sentences.append(current_sentence.strip())
+    
+    return sentences
 
 # --- JWT Helper Functions ---
 
@@ -623,9 +670,76 @@ def extract_from_xml(file):
     print(f"DEBUG: Total sentences extracted: {len(sentences_data)}")
     return sentences_data
 
+# Map from UI language names to codes
+LANG_MAP = {
+    "English": "en",
+    "Hindi": "hi",
+    "Marathi": "mr",
+    "Assamese": "as",
+    "Boro": "brx",
+    "Nepali": "ne",
+    "Manipuri": "mni",
+    "Bangla": "bn",
+    "Maithili": "mai",
+    "Konkani": "gom",
+}
+
+# Languages that IndicNLP can really handle
+INDICNLP_LANGS = {"hi", "mr", "as", "bn"}
+
+_NORMALIZER_FACTORY = IndicNormalizerFactory()
+_NORMALIZERS = {}
+
+
+def get_normalizer(lang_code: str):
+    """Return cached IndicNLP normalizer for the language."""
+    if lang_code not in _NORMALIZERS:
+        _NORMALIZERS[lang_code] = _NORMALIZER_FACTORY.get_normalizer(lang_code)
+    return _NORMALIZERS[lang_code]
+
+
+def split_sentences_with_lang(raw_text: str, language_name: str):
+    """
+    Split sentences depending on language.
+    - Hindi / Marathi / Assamese / Bangla -> IndicNLP
+    - Manipuri -> custom split_manipuri_sentences
+    - English -> NLTK (if available)
+    - Others -> simple regex fallback
+    """
+    if not raw_text or not raw_text.strip():
+        return []
+
+    # Normalize newlines a bit
+    raw_text = raw_text.replace("\r", "").strip()
+
+    lang_code = LANG_MAP.get(language_name, "en")
+
+    # 🔹 Special case: Manipuri
+    if language_name == "Manipuri":
+        return [s.strip() for s in split_manipuri_sentences(raw_text) if s.strip()]
+
+
+    # 1) IndicNLP for supported Indic languages
+    if lang_code in INDICNLP_LANGS:
+        normalizer = get_normalizer(lang_code)
+        normalized = normalizer.normalize(raw_text)
+        sentences = sentence_tokenize.sentence_split(normalized, lang=lang_code)
+        return [re.sub(r"\s+", " ", s).strip() for s in sentences if s and s.strip()]
+
+    # 2) English – use NLTK if present
+    if lang_code == "en" and en_sent_tokenize is not None:
+        return [s.strip() for s in en_sent_tokenize(raw_text) if s.strip()]
+
+    # 3) Fallback for other languages
+    sentences = re.split(r"[।|॥|\.|\?|!]\s*", raw_text)
+    return [s.strip() for s in sentences if s.strip()]
+
+
 def extract_text_from_file(file, file_extension):
     """
-    Extracts text and annotation metadata from uploaded files for project creation. (UNCHANGED)
+    Extracts text and annotation metadata from uploaded files for project creation.
+    `language_name` must be one of:
+    ['English', 'Hindi', 'Marathi', 'Assamese', 'Boro', 'Nepali', 'Manipuri', 'Bangla', 'Maithili', 'Konkani']
     """
     if file_extension == '.xml':
         return extract_from_xml(file)
@@ -641,22 +755,19 @@ def extract_text_from_file(file, file_extension):
     try:
         file.seek(0)
         raw_text = ""
-        
+
         # Read file content based on file type
         if file_extension == '.txt':
             raw_text = file.read().decode('utf-8', errors='ignore')
         elif file_extension == '.pdf':
-            # PDF text extraction
             pdf_reader = PyPDF2.PdfReader(file)
             for page in pdf_reader.pages:
                 raw_text += page.extract_text() + "\n"
         elif file_extension in ['.doc', '.docx']:
-            # DOCX text extraction
             doc = Document(file)
             for paragraph in doc.paragraphs:
                 raw_text += paragraph.text + "\n"
         elif file_extension == '.csv':
-            # CSV text extraction - read all cells
             csv_content = file.read().decode('utf-8', errors='ignore')
             csv_reader = csv.reader(io.StringIO(csv_content))
             for row in csv_reader:
@@ -666,14 +777,14 @@ def extract_text_from_file(file, file_extension):
                 raw_text += "\n"
         else:
             raise ValueError(f"Unsupported file type: {file_extension}")
-        
+
         # Check if this is a structured file (with Sentence ID patterns) or plain text
         if SENTENCE_LINE_REGEX.search(raw_text):
             # Process as structured file with annotations
             print("Detected structured annotation file format")
             raw_lines = raw_text.split('\n')
             current_sentence = None
-            
+
             for line in raw_lines:
                 line = line.strip()
                 if not line:
@@ -685,7 +796,7 @@ def extract_text_from_file(file, file_extension):
                     # If we have a previous sentence, add it to the list
                     if current_sentence:
                         sentences_data.append(current_sentence)
-                    
+
                     # Start new sentence
                     text_content = sentence_match.group(1).strip()
                     if text_content:
@@ -701,7 +812,7 @@ def extract_text_from_file(file, file_extension):
                 if annotation_match and current_sentence:
                     # Mark the current sentence as annotated
                     current_sentence['is_annotated'] = True
-                    
+
                     # Extract annotation data
                     tag_data = annotation_match.groupdict()
                     tag_record = {
@@ -716,57 +827,33 @@ def extract_text_from_file(file, file_extension):
             # Don't forget to add the last sentence
             if current_sentence:
                 sentences_data.append(current_sentence)
-                
+
         else:
-            # Process as plain text with Hindi/English punctuation
-            print("Detected plain text format - splitting by punctuation")
-            
-            # Enhanced sentence splitting for multiple languages
-            # Split on Hindi full stop (।), double danda (॥), and standard punctuation
-            sentences = re.split(r'([।|॥|\.|\?|!]+)\s*', raw_text)
-            
-            # Reconstruct sentences with their punctuation
-            reconstructed_sentences = []
-            i = 0
-            while i < len(sentences):
-                sentence_text = sentences[i].strip()
-                if i + 1 < len(sentences) and sentences[i + 1].strip() in ['।', '॥', '.', '?', '!']:
-                    # Add punctuation back to the sentence
-                    sentence_text += sentences[i + 1].strip()
-                    i += 2
-                else:
-                    i += 1
-                
-                if sentence_text:
-                    reconstructed_sentences.append(sentence_text)
-            
-            # If the above method doesn't work well, fall back to simple splitting
-            if not reconstructed_sentences:
-                sentences = re.split(r'[।|॥|\.|\?|!]\s*', raw_text)
-                reconstructed_sentences = [s.strip() + '.' for s in sentences if s.strip()]
-            
-            # Clean and add sentences
-            for sentence_text in reconstructed_sentences:
-                clean_text = sentence_text.strip()
-                if clean_text and len(clean_text) > 1:  # Filter out very short strings
-                    # Remove excessive whitespace
-                    clean_text = re.sub(r'\s+', ' ', clean_text)
-                    
+            # ✅ Plain text mode: use language-aware splitter (IndicNLP / Manipuri / fallback)
+            print(f"Detected plain text format - splitting using language '{language_name}'")
+
+            sentences = split_sentences_with_lang(raw_text, language_name)
+
+            for sentence_text in sentences:
+                clean_text = re.sub(r"\s+", " ", sentence_text).strip()
+                if clean_text and len(clean_text) > 1:
                     sentences_data.append({
                         "textContent": clean_text,
                         "is_annotated": False,
                         "tags": []
                     })
-            
-            print(f"Extracted {len(sentences_data)} sentences from plain text")
-            
+
+            print(f"Extracted {len(sentences_data)} sentences from plain text (language={language_name})")
+
     except PyPDF2.PdfReadError as e:
         raise ValueError(f"Invalid PDF file: {str(e)}")
     except Exception as e:
         print(f"Error parsing file {file_extension}: {e}")
+        print(traceback.format_exc())
         raise ValueError(f"Failed to parse file: {str(e)}")
-        
+
     return sentences_data
+
 
 
 def log_reviewer_action(reviewer_username, action_description, annotator_username=None):
@@ -3884,7 +3971,7 @@ def create_project():
         if file_extension not in ['.txt', '.pdf', '.doc', '.docx', '.csv', '.xml']:
             return jsonify({"error": "Unsupported file type. Use TXT, PDF, DOC/DOCX, CSV, or XML."}), 400
         
-        all_sentences_data = extract_text_from_file(file, file_extension)
+        all_sentences_data = extract_text_from_file(file, file_extension, language_name=language)
         
         if not all_sentences_data:
             return jsonify({"error": "No valid sentences found in the file"}), 400
